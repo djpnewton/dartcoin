@@ -6,6 +6,7 @@ import 'package:logging/logging.dart';
 import 'utils.dart';
 import 'p2p_messages.dart';
 import 'common.dart';
+import 'result.dart';
 
 final _log = Logger('Node');
 
@@ -94,6 +95,14 @@ class Node {
           '       Inventory: Type: ${inv.type.name}, Hash: ${inv.hash.toHex()}',
         );
       }
+    } else if (message is MessageFeeFilter) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, FeeFilter: ${message.feeRate} sats/kB',
+      );
+    } else if (message is MessageSendcmpct) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, Sendcmpct: Enabled: ${message.enabled}, Version: ${message.version}',
+      );
     } else if (message is MessageUnknown) {
       _log.info('<<<<<: ${peer.ip}:${peer.port}, Unknown: ${message.command}');
     }
@@ -119,9 +128,7 @@ class Node {
           payload: Uint8List(0),
         ).toBytes(network),
       );
-    } else if (message is MessagePong) {
-    } else if (message is MessageInv) {
-    } else if (message is MessageUnknown) {}
+    }
   }
 
   void connectPeer(Peer peer) async {
@@ -150,19 +157,35 @@ class Node {
       ).toBytes(network);
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Version');
       socket.add(versionBytes);
+      var msgBuffer = Uint8List(0);
       socket.listen(
         (data) {
           // Handle incoming data
           //_log.info('<<<<<: ${peer.ip}:${peer.port}, Data: ${data.toHex()}');
+          msgBuffer = Uint8List.fromList(msgBuffer + data);
           // check what message type is received
           try {
-            var offset = 0;
-            while (offset < data.length) {
-              final message = Message.fromBytes(data.sublist(offset), network);
-              logMessage(peer, message);
-              replyMessage(peer, message, socket);
-              // get size of message
-              offset += Message.messageHeaderSize + message.payload.length;
+            var breakLoop = false;
+            while (msgBuffer.isNotEmpty && !breakLoop) {
+              // test if msgBuffer has full message data
+              final result = Message.parse(msgBuffer, network);
+              switch (result) {
+                case Ok():
+                  final message = Message.fromBytes(msgBuffer, network);
+                  logMessage(peer, message);
+                  replyMessage(peer, message, socket);
+                  // reset msgBuffer
+                  msgBuffer = msgBuffer.sublist(
+                    Message.messageHeaderSize + message.payload.length,
+                  );
+                case Error():
+                  // still waiting for data to complete payload
+                  if (result.error is MessageHeaderPayloadExceedsException) {
+                    breakLoop = true;
+                  } else {
+                    throw result.error; // no point parsing twice
+                  }
+              }
             }
           } catch (e) {
             _log.severe(

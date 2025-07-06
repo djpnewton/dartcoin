@@ -3,6 +3,36 @@ import 'dart:typed_data';
 
 import 'common.dart';
 import 'utils.dart';
+import 'result.dart';
+
+class MessageHeaderException implements Exception {
+  final String message;
+
+  MessageHeaderException(this.message);
+
+  @override
+  String toString() => 'MessageHeaderException: $message';
+}
+
+class MessageHeaderTooSmallException extends MessageHeaderException {
+  MessageHeaderTooSmallException(super.message);
+}
+
+class MessageHeaderMagicMismatchException extends MessageHeaderException {
+  MessageHeaderMagicMismatchException(super.message);
+}
+
+class MessageHeaderChecksumExceedsException extends MessageHeaderException {
+  MessageHeaderChecksumExceedsException(super.message);
+}
+
+class MessageHeaderPayloadExceedsException extends MessageHeaderException {
+  MessageHeaderPayloadExceedsException(super.message);
+}
+
+class MessageHeaderChecksumMismatchException extends MessageHeaderException {
+  MessageHeaderChecksumMismatchException(super.message);
+}
 
 class Message {
   static const magicMainnet = [0xf9, 0xbe, 0xb4, 0xd9];
@@ -39,10 +69,12 @@ class Message {
     return buffer.toBytes();
   }
 
-  factory Message.fromBytes(Uint8List bytes, Network network) {
+  static Result<Message> parse(Uint8List bytes, Network network) {
     if (bytes.length < messageHeaderSize) {
-      throw FormatException(
-        'Message bytes must be at least $messageHeaderSize bytes long',
+      return Result.error(
+        MessageHeaderTooSmallException(
+          'Message bytes must be at least $messageHeaderSize bytes long',
+        ),
       );
     }
     final magic = bytes.sublist(0, 4);
@@ -50,42 +82,74 @@ class Message {
       magic,
       network == Network.mainnet ? magicMainnet : magicTestnet,
     )) {
-      throw FormatException('Invalid magic number ${magic.toHex()}');
+      return Result.error(
+        MessageHeaderMagicMismatchException(
+          'Invalid magic number ${magic.toHex()}',
+        ),
+      );
     }
     final command = utf8.decode(bytes.sublist(4, 16)).split('\x00')[0];
     final payloadSize = bytes.buffer.asByteData().getUint32(16, Endian.little);
     if (24 > bytes.length) {
-      throw FormatException('Checksum field exceeds remaining bytes');
+      return Result.error(
+        MessageHeaderChecksumExceedsException(
+          ('Checksum field exceeds remaining bytes'),
+        ),
+      );
     }
     final chksum = bytes.sublist(20, 24);
     if (24 + payloadSize > bytes.length) {
-      throw FormatException('Payload field exceeds remaining bytes');
+      return Result.error(
+        MessageHeaderPayloadExceedsException(
+          'Payload field exceeds remaining bytes ($command, $payloadSize))',
+        ),
+      );
     }
     final payload = bytes.sublist(24, 24 + payloadSize);
 
     // check checksum
     final expectedChecksum = checksum(payload);
     if (!listEquals(expectedChecksum, chksum)) {
-      throw FormatException(
-        'Invalid checksum got ${chksum.toHex()}, '
-        'expected ${expectedChecksum.toHex()}',
+      return Result.error(
+        MessageHeaderChecksumMismatchException(
+          'Invalid checksum got ${chksum.toHex()}, '
+          'expected ${expectedChecksum.toHex()}',
+        ),
       );
     }
 
-    switch (command) {
-      case 'version':
-        return MessageVersion.fromBytes(payload);
-      case 'verack':
-        return MessageVerack();
-      case 'ping':
-        return MessagePing.fromBytes(payload);
-      case 'pong':
-        return MessagePong.fromBytes(payload);
-      case 'inv':
-        return MessageInv.fromBytes(payload);
-      //TODO: more message types
-      default:
-        return MessageUnknown(command: command, payload: payload);
+    // return parsed message header
+    return Result.ok(Message(command: command, payload: payload));
+  }
+
+  factory Message.fromBytes(Uint8List bytes, Network network) {
+    final result = parse(bytes, network);
+    switch (result) {
+      case Error():
+        throw result.error;
+      case Ok():
+        switch (result.value.command) {
+          case 'version':
+            return MessageVersion.fromBytes(result.value.payload);
+          case 'verack':
+            return MessageVerack();
+          case 'ping':
+            return MessagePing.fromBytes(result.value.payload);
+          case 'pong':
+            return MessagePong.fromBytes(result.value.payload);
+          case 'feefilter':
+            return MessageFeeFilter.fromBytes(result.value.payload);
+          case 'inv':
+            return MessageInv.fromBytes(result.value.payload);
+          case 'sendcmpct':
+            return MessageSendcmpct.fromBytes(result.value.payload);
+          //TODO: more message types
+          default:
+            return MessageUnknown(
+              command: result.value.command,
+              payload: result.value.payload,
+            );
+        }
     }
   }
 }
@@ -350,6 +414,33 @@ class MessagePong extends Message {
   }
 }
 
+class MessageFeeFilter extends Message {
+  int feeRate;
+
+  MessageFeeFilter({required this.feeRate, required super.payload})
+    : super(command: 'feefilter') {
+    if (feeRate < 0) {
+      throw ArgumentError('Fee rate must be non-negative');
+    }
+  }
+
+  @override
+  Uint8List toBytes(Network network) {
+    payload = setUint64JsSafe(feeRate, endian: Endian.little);
+    return super.toBytes(network);
+  }
+
+  factory MessageFeeFilter.fromBytes(Uint8List bytes) {
+    if (bytes.length != 8) {
+      throw FormatException(
+        'FeeFilter message bytes must be exactly 8 bytes long',
+      );
+    }
+    final feeRate = getUint64JsSafe(bytes, endian: Endian.little);
+    return MessageFeeFilter(feeRate: feeRate, payload: bytes);
+  }
+}
+
 enum InventoryType { msgTx, msgBlock }
 
 class InventoryItem {
@@ -428,5 +519,40 @@ class MessageInv extends Message {
       throw FormatException('Inventory cannot be empty');
     }
     return MessageInv(inventory: inventory, payload: bytes);
+  }
+}
+
+class MessageSendcmpct extends Message {
+  int enabled;
+  int version;
+
+  MessageSendcmpct({
+    required this.enabled,
+    required this.version,
+    required super.payload,
+  }) : super(command: 'sendcmpct');
+
+  @override
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add(
+      Uint8List.fromList([
+        enabled == 1 ? 1 : 0,
+        ...setUint64JsSafe(version, endian: Endian.little),
+      ]),
+    );
+    this.payload = payload.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageSendcmpct.fromBytes(Uint8List bytes) {
+    if (bytes.length != 9) {
+      throw FormatException(
+        'Sendcmpct message bytes must be exactly 9 bytes long',
+      );
+    }
+    final enabled = bytes[0];
+    final version = getUint64JsSafe(bytes.sublist(1), endian: Endian.little);
+    return MessageSendcmpct(enabled: enabled, version: version, payload: bytes);
   }
 }
