@@ -176,7 +176,7 @@ class Node {
           _log.info('Disconnected from peer: ${peer.ip}:${peer.port}');
           socket.destroy();
         },
-        onError: (error) {
+        onError: (Object error) {
           _log.severe(
             'Error occurred while communicating with peer: ${peer.ip}:${peer.port}, Error: $error',
           );
