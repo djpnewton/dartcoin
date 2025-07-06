@@ -367,22 +367,24 @@ class InventoryItem {
       InventoryType.msgTx => 1,
       InventoryType.msgBlock => 2,
     };
-    return Uint8List.fromList([typeValue] + hash);
+    final typeBuffer = Uint8List(4);
+    typeBuffer.buffer.asByteData().setUint32(0, typeValue, Endian.little);
+    return Uint8List.fromList(typeBuffer + hash);
   }
 
   factory InventoryItem.fromBytes(Uint8List bytes) {
-    if (bytes.length != 33) {
+    if (bytes.length != 36) {
       throw FormatException(
-        'Inventory item bytes must be exactly 33 bytes long',
+        'Inventory item bytes must be exactly 36 bytes long',
       );
     }
-    final typeValue = bytes[0];
+    final typeValue = bytes.buffer.asByteData().getUint32(0, Endian.little);
     final type = switch (typeValue) {
       1 => InventoryType.msgTx,
       2 => InventoryType.msgBlock,
       _ => throw FormatException('Invalid inventory type: $typeValue'),
     };
-    final hash = bytes.sublist(1);
+    final hash = bytes.sublist(4);
     return InventoryItem(type: type, hash: hash);
   }
 }
@@ -412,10 +414,10 @@ class MessageInv extends Message {
     final cspr = compactSizeParse(bytes);
     var offset = cspr.bytesRead;
     final inventory = <InventoryItem>[];
-    while (offset + 33 < bytes.length) {
-      final itemBytes = bytes.sublist(offset, offset + 33);
+    while (offset + 36 <= bytes.length) {
+      final itemBytes = bytes.sublist(offset, offset + 36);
       inventory.add(InventoryItem.fromBytes(itemBytes));
-      offset += 33;
+      offset += 36;
     }
     if (inventory.length != cspr.value) {
       throw FormatException(
