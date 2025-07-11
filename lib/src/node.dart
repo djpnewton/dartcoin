@@ -95,6 +95,27 @@ class Node {
           '       Inventory: Type: ${inv.type.name}, Hash: ${inv.hash.toHex()}',
         );
       }
+    } else if (message is MessageGetData) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, GetData: ${message.inventory.length}',
+      );
+      for (final inv in message.inventory) {
+        _log.info(
+          '       Inventory: Type: ${inv.type.name}, Hash: ${inv.hash.toHex()}',
+        );
+      }
+    } else if (message is MessageBlock) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, Block: ${message.block.header.previousBlockHeaderHash.toHex()}',
+      );
+      _log.info('       Transactions: ${message.block.transactions.length}');
+      for (final tx in message.block.transactions) {
+        _log.info('       Transaction: ${tx.toBytes().toHex()}');
+      }
+    } else if (message is MessageTransaction) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, Transaction: ${message.transaction.toBytes().toHex()}',
+      );
     } else if (message is MessageFeeFilter) {
       _log.info(
         '<<<<<: ${peer.ip}:${peer.port}, FeeFilter: ${message.feeRate} sats/kB',
@@ -128,6 +149,16 @@ class Node {
           payload: Uint8List(0),
         ).toBytes(network),
       );
+    } else if (message is MessageInv) {
+      _log.info('>>>>>: ${peer.ip}:${peer.port}, GetData');
+      socket.add(
+        MessageGetData(
+          inventory: message.inventory,
+          payload: message.payload,
+        ).toBytes(network),
+      );
+    } else if (message is MessageGetData) {
+      // TODO: handle getdata message if we can?
     }
   }
 

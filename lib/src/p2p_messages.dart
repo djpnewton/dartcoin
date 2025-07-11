@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'common.dart';
 import 'utils.dart';
 import 'result.dart';
+import 'block.dart';
+import 'transaction.dart';
 
 class MessageHeaderException implements Exception {
   final String message;
@@ -141,8 +143,14 @@ class Message {
             return MessageFeeFilter.fromBytes(result.value.payload);
           case 'inv':
             return MessageInv.fromBytes(result.value.payload);
+          case 'getdata':
+            return MessageGetData.fromBytes(result.value.payload);
           case 'sendcmpct':
             return MessageSendcmpct.fromBytes(result.value.payload);
+          case 'block':
+            return MessageBlock.fromBytes(result.value.payload);
+          case 'tx':
+            return MessageTransaction.fromBytes(result.value.payload);
           //TODO: more message types
           default:
             return MessageUnknown(
@@ -522,6 +530,24 @@ class MessageInv extends Message {
   }
 }
 
+class MessageGetData extends MessageInv {
+  MessageGetData({required super.inventory, required super.payload}) {
+    command = 'getdata';
+  }
+
+  @override
+  Uint8List toBytes(Network network) {
+    // The payload for getdata is the same as for inv
+    return super.toBytes(network);
+  }
+
+  factory MessageGetData.fromBytes(Uint8List bytes) {
+    // The payload for getdata is the same as for inv
+    final msg = MessageInv.fromBytes(bytes);
+    return MessageGetData(inventory: msg.inventory, payload: msg.payload);
+  }
+}
+
 class MessageSendcmpct extends Message {
   int enabled;
   int version;
@@ -554,5 +580,48 @@ class MessageSendcmpct extends Message {
     final enabled = bytes[0];
     final version = getUint64JsSafe(bytes.sublist(1), endian: Endian.little);
     return MessageSendcmpct(enabled: enabled, version: version, payload: bytes);
+  }
+}
+
+class MessageBlock extends Message {
+  Block block;
+
+  MessageBlock({required this.block, required super.payload})
+    : super(command: 'block');
+
+  @override
+  Uint8List toBytes(Network network) {
+    payload = block.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageBlock.fromBytes(Uint8List bytes) {
+    if (bytes.isEmpty) {
+      throw FormatException('Block message bytes cannot be empty');
+    }
+    return MessageBlock(block: Block.fromBytes(bytes), payload: bytes);
+  }
+}
+
+class MessageTransaction extends Message {
+  Transaction transaction;
+
+  MessageTransaction({required this.transaction, required super.payload})
+    : super(command: 'tx');
+
+  @override
+  Uint8List toBytes(Network network) {
+    payload = transaction.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageTransaction.fromBytes(Uint8List bytes) {
+    if (bytes.isEmpty) {
+      throw FormatException('Transaction message bytes cannot be empty');
+    }
+    return MessageTransaction(
+      transaction: Transaction.fromBytes(bytes),
+      payload: bytes,
+    );
   }
 }
