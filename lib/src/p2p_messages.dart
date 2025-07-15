@@ -151,6 +151,8 @@ class Message {
             return MessageBlock.fromBytes(result.value.payload);
           case 'tx':
             return MessageTransaction.fromBytes(result.value.payload);
+          case 'addr':
+            return MessageAddress.fromBytes(result.value.payload);
           //TODO: more message types
           default:
             return MessageUnknown(
@@ -623,5 +625,107 @@ class MessageTransaction extends Message {
       transaction: Transaction.fromBytes(bytes),
       payload: bytes,
     );
+  }
+}
+
+class Address {
+  int time;
+  int services;
+  Uint8List ipAddress; // IPv6 address
+  int port;
+
+  Address({
+    required this.time,
+    required this.services,
+    required this.ipAddress,
+    required this.port,
+  }) {
+    if (ipAddress.length != 16) {
+      throw ArgumentError('IP address must be 16 bytes (IPv6)');
+    }
+    if (port < 0 || port > 65535) {
+      throw ArgumentError('Port must be between 0 and 65535');
+    }
+  }
+
+  Uint8List toBytes() {
+    final buffer = BytesBuilder();
+    buffer.add(
+      Uint8List(4)..buffer.asByteData().setUint32(0, time, Endian.little),
+    );
+    buffer.add(setUint64JsSafe(services, endian: Endian.little));
+    buffer.add(ipAddress);
+    buffer.add(
+      Uint8List(2)..buffer.asByteData().setUint16(0, port, Endian.big),
+    );
+    return buffer.toBytes();
+  }
+
+  factory Address.fromBytes(Uint8List bytes) {
+    if (bytes.length != 30) {
+      throw FormatException('Address bytes must be exactly 30 bytes long');
+    }
+    final buffer = ByteData.sublistView(bytes);
+    int offset = 0;
+
+    final time = buffer.getUint32(offset, Endian.little);
+    offset += 4;
+    final services = getUint64JsSafe(
+      bytes.sublist(offset),
+      endian: Endian.little,
+    );
+    offset += 8;
+    final ipAddress = bytes.sublist(offset, offset + 16); // IPv6 address
+    offset += 16;
+    final port = buffer.getUint16(offset, Endian.big);
+
+    return Address(
+      time: time,
+      services: services,
+      ipAddress: ipAddress,
+      port: port,
+    );
+  }
+}
+
+class MessageAddress extends Message {
+  List<Address> addresses;
+
+  MessageAddress({required this.addresses, required super.payload})
+    : super(command: 'addr') {
+    if (addresses.isEmpty) {
+      throw ArgumentError('Addresses cannot be empty');
+    }
+  }
+
+  @override
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add(compactSize(addresses.length));
+    for (final address in addresses) {
+      payload.add(address.toBytes());
+    }
+    this.payload = payload.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageAddress.fromBytes(Uint8List bytes) {
+    final cspr = compactSizeParse(bytes);
+    var offset = cspr.bytesRead;
+    final addresses = <Address>[];
+    while (offset + 30 <= bytes.length) {
+      final addrBytes = bytes.sublist(offset, offset + 30);
+      addresses.add(Address.fromBytes(addrBytes));
+      offset += 30;
+    }
+    if (addresses.length != cspr.value) {
+      throw FormatException(
+        'Expected ${cspr.value} addresses, but found ${addresses.length}',
+      );
+    }
+    if (addresses.isEmpty) {
+      throw FormatException('Addresses cannot be empty');
+    }
+    return MessageAddress(addresses: addresses, payload: bytes);
   }
 }

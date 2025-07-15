@@ -26,6 +26,18 @@ Uint8List _ipv4ToIpv6(String ipv4) {
   );
 }
 
+String _ipv6ToIpv4(Uint8List ipv6) {
+  if (ipv6.length != 16) {
+    throw FormatException('Invalid IPv6 address length');
+  }
+  if (ipv6.sublist(0, 10).every((byte) => byte == 0) &&
+      ipv6[10] == 0xff &&
+      ipv6[11] == 0xff) {
+    return '${ipv6[12]}.${ipv6[13]}.${ipv6[14]}.${ipv6[15]}';
+  }
+  throw FormatException('Not a valid IPv4-mapped IPv6 address');
+}
+
 class Peer {
   String ip;
   int port;
@@ -132,6 +144,15 @@ class Node {
       _log.info(
         '<<<<<: ${peer.ip}:${peer.port}, Sendcmpct: Enabled: ${message.enabled}, Version: ${message.version}',
       );
+    } else if (message is MessageAddress) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, Address: ${message.addresses.length} addresses',
+      );
+      for (final addr in message.addresses) {
+        _log.info(
+          '       IP Addr: ${_ipv6ToIpv4(addr.ipAddress)}, Port: ${addr.port}, Time: ${addr.time}',
+        );
+      }
     } else if (message is MessageUnknown) {
       _log.info('<<<<<: ${peer.ip}:${peer.port}, Unknown: ${message.command}');
     }
