@@ -225,6 +225,35 @@ class Transaction {
     required this.locktime,
   });
 
+  String txid() {
+    return hash256(toBytes()).toHex();
+  }
+
+  String wtxid() {
+    if (witness == null) {
+      return txid();
+    }
+    // wtxid excludes the marker/flag and witness data
+    final buffer = BytesBuilder();
+    buffer.add(
+      Uint8List(4)..buffer.asByteData().setUint32(0, version, Endian.little),
+    );
+    final inputsSize = compactSize(inputs.length);
+    buffer.add(inputsSize);
+    for (final input in inputs) {
+      buffer.add(input.toBytes());
+    }
+    final outputsSize = compactSize(outputs.length);
+    buffer.add(outputsSize);
+    for (final output in outputs) {
+      buffer.add(output.toBytes());
+    }
+    buffer.add(
+      Uint8List(4)..buffer.asByteData().setUint32(0, locktime, Endian.little),
+    );
+    return hash256(buffer.toBytes()).toHex();
+  }
+
   Uint8List toBytes() {
     final buffer = BytesBuilder();
     buffer.add(

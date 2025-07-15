@@ -365,7 +365,7 @@ class TestP2pCommand extends Command<void> {
     final peerRaw = argResults?.option('peer');
     if (peerRaw == null) {
       _log.info('Using dns seed to find peer.');
-      ip = await Node.ipFromDnsSeed();
+      ip = await Node.ipFromDnsSeed(network);
       port = Node.defaultPort(network);
     } else {
       final parts = peerRaw.split(':');
@@ -396,12 +396,11 @@ void main(List<String> args) {
         ..addCommand(VerifyCommand())
         ..addCommand(PrivateKeyCommand())
         ..addCommand(TestP2pCommand());
-  // ignore: inference_failure_on_untyped_parameter
-  runner.run(args).catchError((error) {
-    if (error is! UsageException) _log.info('Error: $error\n------\n');
-    _log.info(runner.usage);
+  runner.run(args).catchError((dynamic e) {
+    // ignore: avoid_print
+    print(e);
     exit(64); // Exit code 64 indicates a usage error.
-  });
+    }, test: (e) => e is UsageException);
 }
 
 Uint8List intToBytes(int value) {

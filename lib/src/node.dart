@@ -41,18 +41,26 @@ class Node {
   Node({required this.network});
 
   static int defaultPort(Network network) {
-    return Network.mainnet == Network.mainnet ? 8333 : 18333;
+    return network == Network.mainnet ? 8333 : 18333;
   }
 
-  static Future<String> ipFromDnsSeed() async {
-    final seeds = [
-      'seed.bitcoin.sipa.be',
-      'dnsseed.bluematt.me',
-      'dnsseed.bitcoin.dashjr.org',
-      'seed.bitcoin.sprovoost.nl',
-      'seed.bitcoinstats.com',
-      'seed.bitnodes.io',
-    ];
+  static Future<String> ipFromDnsSeed(Network network) async {
+    final seeds = network == Network.mainnet
+        ? [
+            'seed.bitcoin.sipa.be',
+            'dnsseed.bluematt.me',
+            'dnsseed.bitcoin.dashjr.org',
+            'seed.bitcoin.sprovoost.nl',
+            'seed.bitcoinstats.com',
+            'seed.bitnodes.io',
+          ]
+        : [
+            'testnet-seed.bitcoin.jonasschnelli.ch',
+            'testnet-seed.bluematt.me',
+            'seed.tbtc.petertodd.org',
+            'seed.testnet.bitcoin.sprovoost.nl',
+            'seed.testnet.achownodes.xyz',
+          ];
     final randomSeed =
         seeds[DateTime.now().millisecondsSinceEpoch % seeds.length];
     _log.info('Using DNS seed: $randomSeed');
@@ -110,7 +118,7 @@ class Node {
       );
       _log.info('       Transactions: ${message.block.transactions.length}');
       for (final tx in message.block.transactions) {
-        _log.info('       Transaction: ${tx.toBytes().toHex()}');
+        _log.info('       Transaction: ${tx.txid()}');
       }
     } else if (message is MessageTransaction) {
       _log.info(
@@ -131,8 +139,8 @@ class Node {
     _log.info(
       '       Command:  ${message.command}\n'
       '                                         Size:     ${message.payload.length} bytes\n'
-      '                                         Checksum: ${Message.checksum(message.payload).toHex()}\n'
-      '                                         Payload:  ${message.payload.toHex()}',
+      '                                         Checksum: ${Message.checksum(message.payload).toHex()}\n',
+      //'                                         Payload:  ${message.payload.toHex()}',
     );
   }
 
