@@ -162,7 +162,7 @@ String bech32Encode(
   final hrp = switch (network) {
     Network.mainnet => 'bc',
     Network.testnet => 'tb',
-    Network.regtest => 'bcrt',
+    Network.testnet4 => 'tb',
   };
   // check scriptPubKey length
   if (scriptPubKey.length < 2) {
@@ -223,8 +223,9 @@ Bech32 bech32Decode(String input) {
   final network = switch (hrp) {
     'bc' => Network.mainnet,
     'tb' => Network.testnet,
-    'bcrt' => Network.regtest,
-    _ => throw ArgumentError('Invalid Bech32 human readable part: $hrp'),
+    _ => throw ArgumentError(
+      'Invalid or unsupported Bech32 human readable part: $hrp',
+    ),
   };
   // expand hrp to 5-bit groups
   final hrpExpanded = _hrpExpand(hrp);

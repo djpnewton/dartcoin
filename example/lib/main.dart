@@ -341,11 +341,12 @@ class TestP2pCommand extends Command<void> {
       'network',
       abbr: 'n',
       help: 'The Bitcoin network to use.',
-      allowed: ['mainnet', 'testnet'],
+      allowed: ['mainnet', 'testnet', 'testnet4'],
       defaultsTo: 'mainnet',
       allowedHelp: {
         'mainnet': 'Use the main Bitcoin network.',
-        'testnet': 'Use the Bitcoin test network.',
+        'testnet': 'Use the Bitcoin test network 3.',
+        'testnet4': 'Use the Bitcoin test network 4.',
       },
     );
   }
@@ -359,6 +360,7 @@ class TestP2pCommand extends Command<void> {
     final network = switch (argResults?.option('network')) {
       'mainnet' => Network.mainnet,
       'testnet' => Network.testnet,
+      'testnet4' => Network.testnet4,
       _ => throw ArgumentError('Invalid network type.'),
     };
     _log.info('Network: ${network.name}');

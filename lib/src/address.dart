@@ -14,9 +14,7 @@ String p2pkhAddress(Uint8List publicKey, {Network network = Network.mainnet}) {
   final prefix = switch (network) {
     Network.mainnet => 0x00,
     Network.testnet => 0x6F,
-    Network.regtest => throw UnimplementedError(
-      'Regtest network not supported yet',
-    ),
+    Network.testnet4 => 0x6F,
   };
   final hash = hash160(publicKey);
   return base58EncodeCheck(Uint8List.fromList([prefix, ...hash]));
@@ -34,9 +32,7 @@ String p2shP2wpkhAddress(
   final prefix = switch (network) {
     Network.mainnet => 0x05,
     Network.testnet => 0xC4,
-    Network.regtest => throw UnimplementedError(
-      'Regtest network not supported yet',
-    ),
+    Network.testnet4 => 0xC4,
   };
   // The P2SH-P2WPKH address is a script hash of the P2WPKH script
   final script = Uint8List.fromList([

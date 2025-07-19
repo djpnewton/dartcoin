@@ -37,8 +37,10 @@ class MessageHeaderChecksumMismatchException extends MessageHeaderException {
 }
 
 class Message {
+  static const version = 70015; // Default protocol version
   static const magicMainnet = [0xf9, 0xbe, 0xb4, 0xd9];
   static const magicTestnet = [0x0b, 0x11, 0x09, 0x07];
+  static const magicTestnet4 = [0x1c, 0x16, 0x3f, 0x28];
   static const messageHeaderSize = 24;
   String command;
   Uint8List payload;
@@ -58,7 +60,11 @@ class Message {
   }
 
   Uint8List toBytes(Network network) {
-    final magic = network == Network.mainnet ? magicMainnet : magicTestnet;
+    final magic = switch (network) {
+      Network.mainnet => magicMainnet,
+      Network.testnet => magicTestnet,
+      Network.testnet4 => magicTestnet4,
+    };
     final buffer = BytesBuilder();
     buffer.add(magic);
     buffer.add(_commandToBytes());
@@ -80,10 +86,11 @@ class Message {
       );
     }
     final magic = bytes.sublist(0, 4);
-    if (!listEquals(
-      magic,
-      network == Network.mainnet ? magicMainnet : magicTestnet,
-    )) {
+    if (!listEquals(magic, switch (network) {
+      Network.mainnet => magicMainnet,
+      Network.testnet => magicTestnet,
+      Network.testnet4 => magicTestnet4,
+    })) {
       return Result.error(
         MessageHeaderMagicMismatchException(
           'Invalid magic number ${magic.toHex()}',
@@ -153,6 +160,10 @@ class Message {
             return MessageTransaction.fromBytes(result.value.payload);
           case 'addr':
             return MessageAddress.fromBytes(result.value.payload);
+          case 'getheaders':
+            return MessageGetHeaders.fromBytes(result.value.payload);
+          case 'headers':
+            return MessageHeaders.fromBytes(result.value.payload);
           //TODO: more message types
           default:
             return MessageUnknown(
@@ -180,7 +191,7 @@ class MessageVersion extends Message {
   bool relay;
 
   MessageVersion({
-    this.version = 70014, // Default protocol version
+    this.version = Message.version, // Default protocol version
     this.serviceFlags = 0,
     required this.timestamp,
     this.remoteServiceFlags,
@@ -727,5 +738,118 @@ class MessageAddress extends Message {
       throw FormatException('Addresses cannot be empty');
     }
     return MessageAddress(addresses: addresses, payload: bytes);
+  }
+}
+
+class MessageGetHeaders extends Message {
+  int version;
+  List<Uint8List> headerHashes;
+
+  MessageGetHeaders({
+    this.version = Message.version,
+    required this.headerHashes,
+    required super.payload,
+  }) : super(command: 'getheaders') {
+    if (headerHashes.isEmpty) {
+      throw ArgumentError('Header hashes cannot be empty');
+    }
+    if (headerHashes.isNotEmpty && headerHashes.any((h) => h.length != 32)) {
+      throw ArgumentError('Each header hash must be 32 bytes long');
+    }
+  }
+
+  @override
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add(
+      Uint8List(4)..buffer.asByteData().setUint32(0, version, Endian.little),
+    );
+    payload.add(compactSize(headerHashes.length));
+    for (final hash in headerHashes) {
+      payload.add(hash);
+    }
+    payload.add(Uint8List(32)); // Stop hash (32 bytes of zeros)
+    this.payload = payload.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageGetHeaders.fromBytes(Uint8List bytes) {
+    if (bytes.length < 4 + 1 + 32) {
+      throw FormatException(
+        'GetHeaders message bytes must be at least 37 bytes long',
+      );
+    }
+    final version = bytes.buffer.asByteData().getUint32(0, Endian.little);
+    var offset = 4;
+    final cspr = compactSizeParse(bytes);
+    offset += cspr.bytesRead;
+    final headerHashes = <Uint8List>[];
+    while (offset + 32 <= bytes.length) {
+      final hashBytes = bytes.sublist(offset, offset + 32);
+      headerHashes.add(hashBytes);
+      offset += 32;
+    }
+    if (headerHashes.length != cspr.value + 1) {
+      throw FormatException(
+        'Expected ${cspr.value} header hashes, but found ${headerHashes.length}',
+      );
+    }
+    // The last hash is the stop hash, which should be 32 bytes of zeros
+    if (headerHashes.last.any((b) => b != 0)) {
+      throw FormatException('Last header hash must be 32 bytes of zeros');
+    }
+    headerHashes.removeLast(); // Remove the stop hash
+    return MessageGetHeaders(
+      version: version,
+      headerHashes: headerHashes,
+      payload: bytes,
+    );
+  }
+}
+
+class MessageHeaders extends Message {
+  List<BlockHeader> headers;
+
+  MessageHeaders({required this.headers, required super.payload})
+    : super(command: 'headers') {
+    if (headers.isEmpty) {
+      throw ArgumentError('Headers cannot be empty');
+    }
+  }
+
+  @override
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add(compactSize(headers.length));
+    for (final header in headers) {
+      payload.add(header.toBytes());
+      payload.add([0x00]); // additional 0x00 ('transaction count') suffix
+    }
+    this.payload = payload.toBytes();
+    return super.toBytes(network);
+  }
+
+  factory MessageHeaders.fromBytes(Uint8List bytes) {
+    final cspr = compactSizeParse(bytes);
+    var offset = cspr.bytesRead;
+    final headers = <BlockHeader>[];
+    while (offset + BlockHeader.blockHeaderSize <= bytes.length) {
+      final headerBytes = bytes.sublist(
+        offset,
+        offset + BlockHeader.blockHeaderSize,
+      );
+      headers.add(BlockHeader.fromBytes(headerBytes));
+      offset += BlockHeader.blockHeaderSize;
+      offset++; // Skip the additional 0x00 byte
+    }
+    if (headers.length != cspr.value) {
+      throw FormatException(
+        'Expected ${cspr.value} headers, but found ${headers.length}',
+      );
+    }
+    if (headers.isEmpty) {
+      throw FormatException('Headers cannot be empty');
+    }
+    return MessageHeaders(headers: headers, payload: bytes);
   }
 }

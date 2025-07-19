@@ -17,7 +17,11 @@ class Wif {
   /// Encodes Wallet Import Format (WIF) string.
   String toWifString() {
     final prefix = Uint8List.fromList([
-      network == Network.mainnet ? 0x80 : 0xEF,
+      switch (network) {
+        Network.mainnet => 0x80,
+        Network.testnet => 0xEF,
+        Network.testnet4 => 0xEF,
+      },
     ]);
     final suffix = compressed ? Uint8List.fromList([0x01]) : Uint8List(0);
     final payload = Uint8List.fromList([...prefix, ...privateKey, ...suffix]);

@@ -5,6 +5,7 @@ import 'package:logging/logging.dart';
 
 import 'utils.dart';
 import 'p2p_messages.dart';
+import 'block.dart';
 import 'common.dart';
 import 'result.dart';
 
@@ -47,32 +48,45 @@ class Peer {
 
 class Node {
   Map<Peer, Socket> connections = {};
+  List<BlockHeader> blockHeaders = [];
   String userAgent = '/dartcoin:0.1/';
   Network network;
 
-  Node({required this.network});
+  Node({required this.network}) {
+    // initialize with the genesis block header
+    blockHeaders = <BlockHeader>[Block.genesisBlock(network).header];
+  }
 
   static int defaultPort(Network network) {
-    return network == Network.mainnet ? 8333 : 18333;
+    return switch (network) {
+      Network.mainnet => 8333,
+      Network.testnet => 18333,
+      Network.testnet4 => 48333,
+    };
   }
 
   static Future<String> ipFromDnsSeed(Network network) async {
-    final seeds = network == Network.mainnet
-        ? [
-            'seed.bitcoin.sipa.be',
-            'dnsseed.bluematt.me',
-            'dnsseed.bitcoin.dashjr.org',
-            'seed.bitcoin.sprovoost.nl',
-            'seed.bitcoinstats.com',
-            'seed.bitnodes.io',
-          ]
-        : [
-            'testnet-seed.bitcoin.jonasschnelli.ch',
-            'testnet-seed.bluematt.me',
-            'seed.tbtc.petertodd.org',
-            'seed.testnet.bitcoin.sprovoost.nl',
-            'seed.testnet.achownodes.xyz',
-          ];
+    final seeds = switch (network) {
+      Network.mainnet => [
+        'seed.bitcoin.sipa.be',
+        'dnsseed.bluematt.me',
+        'dnsseed.bitcoin.dashjr.org',
+        'seed.bitcoin.sprovoost.nl',
+        'seed.bitcoinstats.com',
+        'seed.bitnodes.io',
+      ],
+      Network.testnet => [
+        'testnet-seed.bitcoin.jonasschnelli.ch',
+        'testnet-seed.bluematt.me',
+        'seed.tbtc.petertodd.org',
+        'seed.testnet.bitcoin.sprovoost.nl',
+        'seed.testnet.achownodes.xyz',
+      ],
+      Network.testnet4 => [
+        'seed.testnet4.bitcoin.sprovoost.nl',
+        'seed.testnet4.achownodes.xyz',
+      ],
+    };
     final randomSeed =
         seeds[DateTime.now().millisecondsSinceEpoch % seeds.length];
     _log.info('Using DNS seed: $randomSeed');
@@ -129,9 +143,9 @@ class Node {
         '<<<<<: ${peer.ip}:${peer.port}, Block: ${message.block.header.previousBlockHeaderHash.toHex()}',
       );
       _log.info('       Transactions: ${message.block.transactions.length}');
-      for (final tx in message.block.transactions) {
-        _log.info('       Transaction: ${tx.txid()}');
-      }
+      //for (final tx in message.block.transactions) {
+      //  _log.info('       Transaction: ${tx.txid()}');
+      //}
     } else if (message is MessageTransaction) {
       _log.info(
         '<<<<<: ${peer.ip}:${peer.port}, Transaction: ${message.transaction.toBytes().toHex()}',
@@ -153,6 +167,19 @@ class Node {
           '       IP Addr: ${_ipv6ToIpv4(addr.ipAddress)}, Port: ${addr.port}, Time: ${addr.time}',
         );
       }
+    } else if (message is MessageGetHeaders) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, GetHeaders: ${message.headerHashes.length} hashes',
+      );
+    } else if (message is MessageHeaders) {
+      _log.info(
+        '<<<<<: ${peer.ip}:${peer.port}, Headers: ${message.headers.length} headers',
+      );
+      //for (final header in message.headers) {
+      //  _log.info(
+      //    '       Header: Version: ${header.version}, Previous Block: ${header.previousBlockHeaderHash.toHex()}, Merkle Root: ${header.merkleRootHash.toHex()}, Time: ${header.time}, nBits: ${header.nBits}, Nonce: ${header.nonce}',
+      //  );
+      //}
     } else if (message is MessageUnknown) {
       _log.info('<<<<<: ${peer.ip}:${peer.port}, Unknown: ${message.command}');
     }
@@ -168,8 +195,19 @@ class Node {
   void replyMessage(Peer peer, Message message, Socket socket) {
     if (message is MessageVersion) {
     } else if (message is MessageVerack) {
+      // send a verack message back to the peer
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Verack');
       socket.add(MessageVerack().toBytes(network));
+      // also start requesting block headers
+      _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders');
+      socket.add(
+        MessageGetHeaders(
+          headerHashes: [blockHeaders.last.hash()],
+          payload: Uint8List(
+            0,
+          ), // TODO: not nice to need to put this dummy value here
+        ).toBytes(network),
+      );
     } else if (message is MessagePing) {
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Pong');
       socket.add(
@@ -188,6 +226,19 @@ class Node {
       );
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
+    } else if (message is MessageHeaders) {
+      if (addHeaders(message.headers) && message.headers.length == 2000) {
+        // request next batch of block headers
+        _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders');
+        socket.add(
+          MessageGetHeaders(
+            headerHashes: [blockHeaders.last.hash()],
+            payload: Uint8List(
+              0,
+            ), // TODO: not nice to need to put this dummy value here
+          ).toBytes(network),
+        );
+      }
     }
   }
 
@@ -201,6 +252,7 @@ class Node {
       final socket = await Socket.connect(peer.ip, peer.port);
       connections[peer] = socket;
       _log.info('Connected to peer: ${peer.ip}:${peer.port}');
+      // send version message
       final versionBytes = MessageVersion(
         timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
         remoteAddress: _ipv4ToIpv6(peer.ip),
@@ -217,6 +269,7 @@ class Node {
       ).toBytes(network);
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Version');
       socket.add(versionBytes);
+      // listen for incoming messages
       var msgBuffer = Uint8List(0);
       socket.listen(
         (data) {
@@ -270,5 +323,24 @@ class Node {
         'Failed to connect to peer: ${peer.ip}:${peer.port}, Error: $error',
       );
     }
+  }
+
+  bool addHeaders(List<BlockHeader> headers) {
+    if (blockHeaders.isEmpty) {
+      _log.warning('No block headers available to validate against');
+      return false; // no headers to validate against
+    }
+    for (final header in headers) {
+      if (blockHeaders.last.hash().toHex() !=
+          header.previousBlockHeaderHash.toHex()) {
+        _log.warning(
+          'Received header with previous hash mismatch: ${header.previousBlockHeaderHash.toHex()}',
+        );
+        return false; // abort adding headers
+      }
+      blockHeaders.add(header);
+    }
+    _log.info('Added ${headers.length} headers, total: ${blockHeaders.length}');
+    return true;
   }
 }
