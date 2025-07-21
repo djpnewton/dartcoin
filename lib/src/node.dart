@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -53,12 +54,15 @@ class Node {
 
   Map<Peer, Socket> connections = {};
   List<BlockHeader> blockHeaders = [];
+  late String dataDir;
   String userAgent = '/dartcoin:0.1/';
   Network network;
 
   Node({required this.network}) {
-    // initialize with the genesis block header
-    blockHeaders = <BlockHeader>[Block.genesisBlock(network).header];
+    // initialize the data directory
+    dataDir = initDataDir(network);
+    // initialize the block headers
+    blockHeaders = initBlockHeaders(network);
   }
 
   static int defaultPort(Network network) {
@@ -111,6 +115,65 @@ class Node {
       rethrow;
     }
     throw Exception('No valid IP address found for DNS seed: $randomSeed');
+  }
+
+  String initDataDir(Network network) {
+    final baseDir = '.';
+    final dirName = switch (network) {
+      Network.mainnet => '.dartcoin/mainnet',
+      Network.testnet => '.dartcoin/testnet',
+      Network.testnet4 => '.dartcoin/testnet4',
+    };
+    final dataDir = '$baseDir/$dirName';
+    Directory(dataDir).createSync(recursive: true);
+    _log.info('Data directory initialized at: $dataDir');
+    return dataDir;
+  }
+
+  String get blockHeadersFilePath {
+    return '$dataDir/headers.json';
+  }
+
+  List<BlockHeader> blockHeadersRead() {
+    final headersFile = File(blockHeadersFilePath);
+    if (headersFile.existsSync()) {
+      _log.info('Block headers file found: $blockHeadersFilePath');
+      final headersJson = headersFile.readAsStringSync();
+      final headers = (jsonDecode(headersJson) as List)
+          .map(
+            (headerData) =>
+                BlockHeader.fromBytes((headerData[1] as String).toBytes()),
+          )
+          .toList();
+      _log.info('Loaded ${headers.length} block headers from file');
+      return headers;
+    }
+    return [];
+  }
+
+  void blockHeadersWrite() {
+    final headersFile = File(blockHeadersFilePath);
+    final headersJson = jsonEncode(
+      blockHeaders.map((header) => [_reverseHash(header.hash()).toHex(), header.toBytes().toHex()]).toList(),
+    );
+    headersFile.writeAsStringSync(headersJson);
+    _log.info('Block headers written to file: $blockHeadersFilePath');
+  }
+
+  List<BlockHeader> initBlockHeaders(Network network) {
+    final genesisBlock = Block.genesisBlock(network);
+    // check for block headers file
+    final headers = blockHeadersRead();
+    if (headers.isNotEmpty) {
+      if (headers.first.hash().toHex() == genesisBlock.header.hash().toHex()) {
+        return headers;
+      }
+      _log.warning(
+        'Genesis block header hash mismatch: ${headers.first.hash().toHex()} != ${genesisBlock.header.hash().toHex()}',
+      );
+    }
+    // if no headers file or mismatch, use genesis block header
+    return [genesisBlock.header];
   }
 
   void logMessage(Peer peer, Message message, MessageHeader msgHeader) {
@@ -196,14 +259,14 @@ class Node {
     );
   }
 
-  void replyMessage(Peer peer, Message message, Socket socket) {
+  void handleMessage(Peer peer, Message message, Socket socket) {
     if (message is MessageVersion) {
     } else if (message is MessageVerack) {
       // send a verack message back to the peer
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Verack');
       socket.add(MessageVerack().toBytes(network));
       // also start requesting block headers
-      _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders');
+      _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}');
       socket.add(
         MessageGetHeaders(
           headerHashes: [blockHeaders.last.hash()],
@@ -217,11 +280,15 @@ class Node {
       socket.add(MessageGetData(inventory: message.inventory).toBytes(network));
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
+    } else if (message is MessageBlock) {
+      // add the block to the block headers
+      addHeaders([message.block.header]);
     } else if (message is MessageHeaders) {
+      // add the headers to the blockHeaders list
       if (addHeaders(message.headers) &&
           message.headers.length == maxBlockHeaders) {
         // request next batch of block headers
-        _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders');
+        _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}');
         socket.add(
           MessageGetHeaders(
             headerHashes: [blockHeaders.last.hash()],
@@ -275,7 +342,7 @@ class Node {
                     network,
                   );
                   logMessage(peer, message, msgHeader);
-                  replyMessage(peer, message, socket);
+                  handleMessage(peer, message, socket);
                   // reset msgBuffer
                   msgBuffer = msgBuffer.sublist(
                     MessageHeader.messageHeaderSize +
@@ -413,6 +480,10 @@ class Node {
     return blockHeaders.last.nBits;
   }
 
+  Uint8List _reverseHash(Uint8List hash) {
+    return Uint8List.fromList(hash.reversed.toList());
+  }
+
   bool addHeaders(List<BlockHeader> headers) {
     if (blockHeaders.isEmpty) {
       _log.warning('No block headers available to validate against');
@@ -420,9 +491,7 @@ class Node {
     }
     for (final header in headers) {
       final headerHash = header.hash();
-      final headerHashReversed = Uint8List.fromList(
-        headerHash.reversed.toList(),
-      );
+      final headerHashReversed = _reverseHash(headerHash);
       _log.info(
         'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${blockHeaders.length}, time: ${header.time - blockHeaders.last.time}s',
       );
@@ -435,7 +504,7 @@ class Node {
       if (blockHeaders.last.hash().toHex() !=
           header.previousBlockHeaderHash.toHex()) {
         _log.warning(
-          'Received header with previous hash mismatch: ${header.previousBlockHeaderHash.toHex()}',
+          'Received header with previous hash mismatch: ${_reverseHash(header.previousBlockHeaderHash).toHex().padLeft(64, '0')}, expected: ${_reverseHash(blockHeaders.last.hash()).toHex().padLeft(64, '0')}',
         );
         return false; // abort adding headers
       }
@@ -476,6 +545,8 @@ class Node {
       blockHeaders.add(header);
     }
     _log.info('Added ${headers.length} headers, total: ${blockHeaders.length}');
+    // write the headers to file
+    blockHeadersWrite();
     return true;
   }
 }
