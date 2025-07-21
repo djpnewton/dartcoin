@@ -23,6 +23,24 @@ class BlockHeader {
     required this.nonce,
   });
 
+  static BigInt bitsToTarget(int bits) {
+    final exponent = bits >> 24 & 0xff;
+    final coefficient = bits & 0x00ffffff;
+    return BigInt.from(coefficient) * (BigInt.one << (8 * (exponent - 3)));
+  }
+
+  static int targetToBits(BigInt target) {
+    if (target <= BigInt.zero) {
+      throw ArgumentError('Target must be greater than zero');
+    }
+    BigInt exponent = BigInt.from(3);
+    while (target > BigInt.from(0x007fffff)) {
+      target >>= 8;
+      exponent += BigInt.one;
+    }
+    return ((exponent << 24) | target).toInt();
+  }
+
   Uint8List hash() => hash256(toBytes());
 
   Uint8List toBytes() {

@@ -811,11 +811,7 @@ class MessageHeaders extends Message {
   List<BlockHeader> headers;
 
   MessageHeaders({required this.headers, required super.payload})
-    : super(command: 'headers') {
-    if (headers.isEmpty) {
-      throw ArgumentError('Headers cannot be empty');
-    }
-  }
+    : super(command: 'headers');
 
   @override
   Uint8List toBytes(Network network) {
@@ -846,9 +842,6 @@ class MessageHeaders extends Message {
       throw FormatException(
         'Expected ${cspr.value} headers, but found ${headers.length}',
       );
-    }
-    if (headers.isEmpty) {
-      throw FormatException('Headers cannot be empty');
     }
     return MessageHeaders(headers: headers, payload: bytes);
   }

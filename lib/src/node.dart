@@ -47,6 +47,10 @@ class Peer {
 }
 
 class Node {
+  static const int difficultyAdjustmentInterval = 2016;
+  static const int maxTimewarp = 600;
+  static const int maxBlockHeaders = 2000;
+
   Map<Peer, Socket> connections = {};
   List<BlockHeader> blockHeaders = [];
   String userAgent = '/dartcoin:0.1/';
@@ -227,7 +231,8 @@ class Node {
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
     } else if (message is MessageHeaders) {
-      if (addHeaders(message.headers) && message.headers.length == 2000) {
+      if (addHeaders(message.headers) &&
+          message.headers.length == maxBlockHeaders) {
         // request next batch of block headers
         _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders');
         socket.add(
@@ -325,16 +330,161 @@ class Node {
     }
   }
 
+  bool checkMedianTimePast(BlockHeader header) {
+    // block time must be greater then the median time of the last 11 blocks
+    if (blockHeaders.length < 11) {
+      return true; // not enough headers to check median time
+    }
+    final last11Headers = blockHeaders.sublist(
+      blockHeaders.length - 11,
+      blockHeaders.length,
+    );
+    last11Headers.sort((a, b) => a.time.compareTo(b.time));
+    final medianTime = last11Headers[5].time; // 6th element is the median
+    if (header.time <= medianTime) {
+      _log.warning(
+        'Received header with invalid timestamp: ${header.time}, median time: $medianTime',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  int calcNextWorkRequired(BlockHeader header) {
+    // convert bits to target
+    var currentBits = blockHeaders.last.nBits;
+    if (network == Network.testnet4) {
+      // bip 94 rule on testnet4
+      currentBits =
+          blockHeaders[blockHeaders.length - difficultyAdjustmentInterval]
+              .nBits;
+    }
+    final target = BlockHeader.bitsToTarget(currentBits);
+    // recalculate the difficulty
+    var actualTimespan =
+        blockHeaders.last.time -
+        blockHeaders[blockHeaders.length - difficultyAdjustmentInterval].time;
+    final expectedTimespan = 14 * 24 * 60 * 60; // 14 days in seconds
+    if (actualTimespan < expectedTimespan ~/ 4) {
+      _log.info(
+        'Actual timespan is less than 1/4 of expected: $actualTimespan < ${expectedTimespan ~/ 4}',
+      );
+      actualTimespan = expectedTimespan ~/ 4;
+    }
+    if (actualTimespan > expectedTimespan * 4) {
+      _log.info(
+        'Actual timespan is more than 4x of expected: $actualTimespan > ${expectedTimespan * 4}',
+      );
+      actualTimespan = expectedTimespan * 4;
+    }
+    final ratio = actualTimespan / expectedTimespan;
+    _log.info(
+      'Ratio: $ratio, Actual Timespan: $actualTimespan, Expected Timespan: $expectedTimespan',
+    );
+    final newTarget =
+        (target * BigInt.from(actualTimespan)) ~/ BigInt.from(expectedTimespan);
+    final newBits = BlockHeader.targetToBits(newTarget);
+    _log.info(
+      'Recalculating difficulty: Old Bits: ${currentBits.toRadixString(16)}, New Bits: ${newBits.toRadixString(16)}',
+    );
+    // check newBits is not greater than the genesis block's nBits
+    final genesisTarget = BlockHeader.bitsToTarget(blockHeaders.first.nBits);
+    if (newTarget > genesisTarget) {
+      _log.warning(
+        'New target is greater than genesis target: $newTarget > $genesisTarget',
+      );
+      return blockHeaders.first.nBits;
+    }
+    return newBits;
+  }
+
+  int getWork(BlockHeader header) {
+    // calculate new work on new epoch
+    if (blockHeaders.length % difficultyAdjustmentInterval == 0) {
+      return calcNextWorkRequired(header);
+    }
+    // reset the work required on testnet if the time between blocks is more than 20 minutes
+    if (network == Network.testnet || network == Network.testnet4) {
+      final lastTime = blockHeaders.last.time;
+      const resetTime = 20 * 60; // 20 minutes in seconds
+      var blockInterval = header.time - lastTime;
+      if (blockInterval > resetTime) {
+        _log.info(
+          'Resetting work required on testnet due to long time since last block: $blockInterval seconds',
+        );
+        return blockHeaders.first.nBits; // reset to the first block's nBits
+      } else if (blockHeaders.length > 2) {
+        // use the last non special minimum difficulty block
+        var blkIndex = blockHeaders.length - 1;
+        while (blkIndex > 0 &&
+            (blkIndex + 1) % difficultyAdjustmentInterval != 0 &&
+            blockHeaders[blkIndex].nBits == blockHeaders.first.nBits) {
+          blkIndex--;
+        }
+        return blockHeaders[blkIndex].nBits;
+      }
+    }
+    // otherwise, use the last block's nBits
+    return blockHeaders.last.nBits;
+  }
+
   bool addHeaders(List<BlockHeader> headers) {
     if (blockHeaders.isEmpty) {
       _log.warning('No block headers available to validate against');
       return false; // no headers to validate against
     }
     for (final header in headers) {
+      final headerHash = header.hash();
+      final headerHashReversed = Uint8List.fromList(
+        headerHash.reversed.toList(),
+      );
+      _log.info(
+        'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${blockHeaders.length}, time: ${header.time - blockHeaders.last.time}s',
+      );
+      _log.info('header bits:     ${header.nBits.toRadixString(16)}');
+      _log.info(
+        'header target:   ${BlockHeader.bitsToTarget(header.nBits).toRadixString(16).padLeft(64, '0')}',
+      );
+
+      // check the previous block header hash
       if (blockHeaders.last.hash().toHex() !=
           header.previousBlockHeaderHash.toHex()) {
         _log.warning(
           'Received header with previous hash mismatch: ${header.previousBlockHeaderHash.toHex()}',
+        );
+        return false; // abort adding headers
+      }
+      // check the median time past
+      if (!checkMedianTimePast(header)) {
+        return false; // abort adding headers
+      }
+      // check testnet4 timewarp rule (bip 94)
+      if (network == Network.testnet4) {
+        if (blockHeaders.length % difficultyAdjustmentInterval == 0 &&
+            blockHeaders.length > 1) {
+          if (header.time < blockHeaders.last.time - maxTimewarp) {
+            _log.warning(
+              'Received header with invalid time: ${header.time}, expected greater then or equal to ${blockHeaders.last.time - maxTimewarp}',
+            );
+            return false; // abort adding headers
+          }
+        }
+      }
+      // get the work required
+      final bits = getWork(header);
+      _log.info('Work required:   ${bits.toRadixString(16).padLeft(8, '0')}');
+      // check the work
+      if (bits != header.nBits) {
+        _log.warning(
+          'Received header with different nBits: ${header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
+        );
+        return false; // abort adding headers
+      }
+      final target = BlockHeader.bitsToTarget(bits);
+      final headerWork = bytesToBigInt(headerHashReversed);
+      if (headerWork > target) {
+        _log.warning(
+          'Received header with insufficient work: ${headerHashReversed.toHex().padLeft(64, '0')} (needed: ${target.toRadixString(16).padLeft(64, '0')})',
         );
         return false; // abort adding headers
       }
