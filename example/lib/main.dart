@@ -118,11 +118,11 @@ class SignCommand extends Command<void> {
   final description = 'Sign a message with a private key.';
 
   SignCommand() {
-    // TODO: take the private key from a standard input or file?
     argParser.addOption(
       'private-key',
       abbr: 'p',
-      help: 'The private key in hex/WIF/xpriv format.',
+      help:
+          'The private key filename (single line file in hex/WIF/xpriv format).',
       mandatory: true,
     );
     argParser.addOption(
@@ -171,11 +171,29 @@ class SignCommand extends Command<void> {
 
   @override
   void run() {
-    final pkRaw = argResults?.option('private-key');
+    final pkFilename = argResults?.option('private-key');
     final message = argResults?.option('message');
-    if (pkRaw == null || message == null) {
+    if (pkFilename == null || message == null) {
       // should not happen due to mandatory options, but just in case
-      _log.info('Please provide both a private key and a message to sign.');
+      _log.info(
+        'Please provide both a private key filename and a message to sign.',
+      );
+      return;
+    }
+    // load private key from file
+    String pkRaw;
+    if (!File(pkFilename).existsSync()) {
+      _log.info('Private key file not found: $pkFilename');
+      return;
+    }
+    try {
+      pkRaw = File(pkFilename).readAsStringSync().trim();
+      if (pkRaw.isEmpty) {
+        _log.info('Private key file is empty: $pkFilename');
+        return;
+      }
+    } catch (e) {
+      _log.info('Error reading private key file: $pkFilename');
       return;
     }
     // load private key from hex, WIF, or xpriv
@@ -298,19 +316,35 @@ class PrivateKeyCommand extends Command<void> {
   @override
   final description = 'Format a private key to WIF';
   PrivateKeyCommand() {
-    // TODO: take the private key from a standard input or file?
     argParser.addOption(
       'private-key',
       abbr: 'p',
-      help: 'The private key in hex format.',
+      help: 'The private key file (single line in hex format).',
       mandatory: true,
     );
   }
   @override
   void run() {
-    final pkRaw = argResults?.option('private-key');
-    if (pkRaw == null) {
-      _log.info('Please provide a private key in hex format.');
+    final pkFilename = argResults?.option('private-key');
+    if (pkFilename == null) {
+      _log.info('Please provide a private key file.');
+      return;
+    }
+    // check if the file exists
+    if (!File(pkFilename).existsSync()) {
+      _log.info('Private key file not found: $pkFilename');
+      return;
+    }
+    // read the private key from the file
+    String pkRaw;
+    try {
+      pkRaw = File(pkFilename).readAsStringSync().trim();
+      if (pkRaw.isEmpty) {
+        _log.info('Private key file is empty: $pkFilename');
+        return;
+      }
+    } catch (e) {
+      _log.info('Error reading private key file: $pkFilename');
       return;
     }
     try {
@@ -353,8 +387,6 @@ class TestP2pCommand extends Command<void> {
 
   @override
   void run() async {
-    initLogger();
-
     String? ip;
     int? port;
     final network = switch (argResults?.option('network')) {
@@ -388,6 +420,8 @@ class TestP2pCommand extends Command<void> {
 }
 
 void main(List<String> args) {
+  initLogger();
+
   final runner =
       CommandRunner<void>(
           'dartcoin',
@@ -398,11 +432,18 @@ void main(List<String> args) {
         ..addCommand(VerifyCommand())
         ..addCommand(PrivateKeyCommand())
         ..addCommand(TestP2pCommand());
-  runner.run(args).catchError((dynamic e) {
-    // ignore: avoid_print
-    print(e);
-    exit(64); // Exit code 64 indicates a usage error.
-    }, test: (e) => e is UsageException);
+  runner
+      .run(args)
+      .catchError((dynamic e) {
+        // ignore: avoid_print
+        print(e);
+        exit(64); // Exit code 64 indicates a usage error.
+      }, test: (e) => e is UsageException)
+      .catchError((dynamic e) {
+        // ignore: avoid_print
+        print(e);
+        exit(1);
+      });
 }
 
 Uint8List intToBytes(int value) {
