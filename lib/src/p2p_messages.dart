@@ -36,8 +36,7 @@ class MessageHeaderChecksumMismatchException extends MessageHeaderException {
   MessageHeaderChecksumMismatchException(super.message);
 }
 
-class Message {
-  static const version = 70015; // Default protocol version
+class MessageHeader {
   static const magicMainnet = [0xf9, 0xbe, 0xb4, 0xd9];
   static const magicTestnet = [0x0b, 0x11, 0x09, 0x07];
   static const magicTestnet4 = [0x1c, 0x16, 0x3f, 0x28];
@@ -45,7 +44,7 @@ class Message {
   String command;
   Uint8List payload;
 
-  Message({required this.command, required this.payload});
+  MessageHeader({required this.command, required this.payload});
 
   static Uint8List checksum(Uint8List data) {
     return hash256(data).sublist(0, 4);
@@ -77,7 +76,7 @@ class Message {
     return buffer.toBytes();
   }
 
-  static Result<Message> parse(Uint8List bytes, Network network) {
+  static Result<MessageHeader> parse(Uint8List bytes, Network network) {
     if (bytes.length < messageHeaderSize) {
       return Result.error(
         MessageHeaderTooSmallException(
@@ -128,47 +127,80 @@ class Message {
     }
 
     // return parsed message header
-    return Result.ok(Message(command: command, payload: payload));
+    return Result.ok(MessageHeader(command: command, payload: payload));
   }
+}
 
-  factory Message.fromBytes(Uint8List bytes, Network network) {
-    final result = parse(bytes, network);
+class Message {
+  static const version = 70015; // Default protocol version
+
+  Message();
+
+  static (Message, MessageHeader) fromBytes(Uint8List bytes, Network network) {
+    final result = MessageHeader.parse(bytes, network);
     switch (result) {
       case Error():
         throw result.error;
       case Ok():
         switch (result.value.command) {
           case 'version':
-            return MessageVersion.fromBytes(result.value.payload);
+            return (
+              MessageVersion.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'verack':
-            return MessageVerack();
+            return (MessageVerack(), result.value);
           case 'ping':
-            return MessagePing.fromBytes(result.value.payload);
+            return (MessagePing.fromBytes(result.value.payload), result.value);
           case 'pong':
-            return MessagePong.fromBytes(result.value.payload);
+            return (MessagePong.fromBytes(result.value.payload), result.value);
           case 'feefilter':
-            return MessageFeeFilter.fromBytes(result.value.payload);
+            return (
+              MessageFeeFilter.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'inv':
-            return MessageInv.fromBytes(result.value.payload);
+            return (MessageInv.fromBytes(result.value.payload), result.value);
           case 'getdata':
-            return MessageGetData.fromBytes(result.value.payload);
+            return (
+              MessageGetData.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'sendcmpct':
-            return MessageSendcmpct.fromBytes(result.value.payload);
+            return (
+              MessageSendcmpct.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'block':
-            return MessageBlock.fromBytes(result.value.payload);
+            return (MessageBlock.fromBytes(result.value.payload), result.value);
           case 'tx':
-            return MessageTransaction.fromBytes(result.value.payload);
+            return (
+              MessageTransaction.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'addr':
-            return MessageAddress.fromBytes(result.value.payload);
+            return (
+              MessageAddress.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'getheaders':
-            return MessageGetHeaders.fromBytes(result.value.payload);
+            return (
+              MessageGetHeaders.fromBytes(result.value.payload),
+              result.value,
+            );
           case 'headers':
-            return MessageHeaders.fromBytes(result.value.payload);
+            return (
+              MessageHeaders.fromBytes(result.value.payload),
+              result.value,
+            );
           //TODO: more message types
           default:
-            return MessageUnknown(
-              command: result.value.command,
-              payload: result.value.payload,
+            return (
+              MessageUnknown(
+                command: result.value.command,
+                payload: result.value.payload,
+              ),
+              result.value,
             );
         }
     }
@@ -204,8 +236,7 @@ class MessageVersion extends Message {
     required this.userAgent,
     required this.lastBlock,
     required this.relay,
-    required super.payload,
-  }) : super(command: 'version') {
+  }) {
     if (remoteAddress != null && remoteAddress!.length != 16) {
       throw ArgumentError('Remote address must be 16 bytes (IPv6)');
     }
@@ -214,7 +245,6 @@ class MessageVersion extends Message {
     }
   }
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     // protocol version
@@ -264,9 +294,12 @@ class MessageVersion extends Message {
     );
     // relay flag
     payload.add(relay ? Uint8List.fromList([1]) : Uint8List.fromList([0]));
-    // set the payload
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    // generate the message including header
+    final msgHeader = MessageHeader(
+      command: 'version',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageVersion.fromBytes(Uint8List bytes) {
@@ -376,31 +409,40 @@ class MessageVersion extends Message {
       userAgent: userAgent,
       lastBlock: lastBlock,
       relay: relayFlag,
-      payload: bytes,
     );
   }
 }
 
 class MessageVerack extends Message {
-  MessageVerack() : super(command: 'verack', payload: Uint8List(0));
+  MessageVerack();
+
+  Uint8List toBytes(Network network) {
+    // The verack message has no payload, so we just return the header
+    final msgHeader = MessageHeader(command: 'verack', payload: Uint8List(0));
+    return msgHeader.toBytes(network);
+  }
 }
 
 class MessageUnknown extends Message {
-  MessageUnknown({required super.command, required super.payload});
+  String command;
+  Uint8List payload;
+
+  MessageUnknown({required this.command, required this.payload});
 }
 
 class MessagePing extends Message {
   int nonce;
 
-  MessagePing({required this.nonce, required super.payload})
-    : super(command: 'ping');
+  MessagePing({required this.nonce});
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(setUint64JsSafe(nonce, endian: Endian.little));
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'ping',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessagePing.fromBytes(Uint8List bytes) {
@@ -408,22 +450,23 @@ class MessagePing extends Message {
       throw FormatException('Ping message bytes must be exactly 8 bytes long');
     }
     final nonce = getUint64JsSafe(bytes, endian: Endian.little);
-    return MessagePing(nonce: nonce, payload: bytes);
+    return MessagePing(nonce: nonce);
   }
 }
 
 class MessagePong extends Message {
   int nonce;
 
-  MessagePong({required this.nonce, required super.payload})
-    : super(command: 'pong');
+  MessagePong({required this.nonce});
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(setUint64JsSafe(nonce, endian: Endian.little));
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'pong',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessagePong.fromBytes(Uint8List bytes) {
@@ -431,24 +474,23 @@ class MessagePong extends Message {
       throw FormatException('Pong message bytes must be exactly 8 bytes long');
     }
     final nonce = getUint64JsSafe(bytes, endian: Endian.little);
-    return MessagePong(nonce: nonce, payload: bytes);
+    return MessagePong(nonce: nonce);
   }
 }
 
 class MessageFeeFilter extends Message {
   int feeRate;
 
-  MessageFeeFilter({required this.feeRate, required super.payload})
-    : super(command: 'feefilter') {
+  MessageFeeFilter({required this.feeRate}) {
     if (feeRate < 0) {
       throw ArgumentError('Fee rate must be non-negative');
     }
   }
 
-  @override
   Uint8List toBytes(Network network) {
-    payload = setUint64JsSafe(feeRate, endian: Endian.little);
-    return super.toBytes(network);
+    final payload = setUint64JsSafe(feeRate, endian: Endian.little);
+    final msgHeader = MessageHeader(command: 'feefilter', payload: payload);
+    return msgHeader.toBytes(network);
   }
 
   factory MessageFeeFilter.fromBytes(Uint8List bytes) {
@@ -458,7 +500,7 @@ class MessageFeeFilter extends Message {
       );
     }
     final feeRate = getUint64JsSafe(bytes, endian: Endian.little);
-    return MessageFeeFilter(feeRate: feeRate, payload: bytes);
+    return MessageFeeFilter(feeRate: feeRate);
   }
 }
 
@@ -504,22 +546,20 @@ class InventoryItem {
 class MessageInv extends Message {
   List<InventoryItem> inventory;
 
-  MessageInv({required this.inventory, required super.payload})
-    : super(command: 'inv') {
+  MessageInv({required this.inventory}) {
     if (inventory.isEmpty) {
       throw ArgumentError('Inventory cannot be empty');
     }
   }
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(compactSize(inventory.length));
     for (final item in inventory) {
       payload.add(item.toBytes());
     }
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(command: 'inv', payload: payload.toBytes());
+    return msgHeader.toBytes(network);
   }
 
   factory MessageInv.fromBytes(Uint8List bytes) {
@@ -539,25 +579,31 @@ class MessageInv extends Message {
     if (inventory.isEmpty) {
       throw FormatException('Inventory cannot be empty');
     }
-    return MessageInv(inventory: inventory, payload: bytes);
+    return MessageInv(inventory: inventory);
   }
 }
 
 class MessageGetData extends MessageInv {
-  MessageGetData({required super.inventory, required super.payload}) {
-    command = 'getdata';
-  }
+  MessageGetData({required super.inventory});
 
   @override
   Uint8List toBytes(Network network) {
-    // The payload for getdata is the same as for inv
-    return super.toBytes(network);
+    final payload = BytesBuilder();
+    payload.add(compactSize(inventory.length));
+    for (final item in inventory) {
+      payload.add(item.toBytes());
+    }
+    final msgHeader = MessageHeader(
+      command: 'getdata',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageGetData.fromBytes(Uint8List bytes) {
     // The payload for getdata is the same as for inv
     final msg = MessageInv.fromBytes(bytes);
-    return MessageGetData(inventory: msg.inventory, payload: msg.payload);
+    return MessageGetData(inventory: msg.inventory);
   }
 }
 
@@ -565,13 +611,8 @@ class MessageSendcmpct extends Message {
   int enabled;
   int version;
 
-  MessageSendcmpct({
-    required this.enabled,
-    required this.version,
-    required super.payload,
-  }) : super(command: 'sendcmpct');
+  MessageSendcmpct({required this.enabled, required this.version});
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(
@@ -580,8 +621,11 @@ class MessageSendcmpct extends Message {
         ...setUint64JsSafe(version, endian: Endian.little),
       ]),
     );
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'sendcmpct',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageSendcmpct.fromBytes(Uint8List bytes) {
@@ -592,50 +636,45 @@ class MessageSendcmpct extends Message {
     }
     final enabled = bytes[0];
     final version = getUint64JsSafe(bytes.sublist(1), endian: Endian.little);
-    return MessageSendcmpct(enabled: enabled, version: version, payload: bytes);
+    return MessageSendcmpct(enabled: enabled, version: version);
   }
 }
 
 class MessageBlock extends Message {
   Block block;
 
-  MessageBlock({required this.block, required super.payload})
-    : super(command: 'block');
+  MessageBlock({required this.block});
 
-  @override
   Uint8List toBytes(Network network) {
-    payload = block.toBytes();
-    return super.toBytes(network);
+    final payload = block.toBytes();
+    final msgHeader = MessageHeader(command: 'block', payload: payload);
+    return msgHeader.toBytes(network);
   }
 
   factory MessageBlock.fromBytes(Uint8List bytes) {
     if (bytes.isEmpty) {
       throw FormatException('Block message bytes cannot be empty');
     }
-    return MessageBlock(block: Block.fromBytes(bytes), payload: bytes);
+    return MessageBlock(block: Block.fromBytes(bytes));
   }
 }
 
 class MessageTransaction extends Message {
   Transaction transaction;
 
-  MessageTransaction({required this.transaction, required super.payload})
-    : super(command: 'tx');
+  MessageTransaction({required this.transaction});
 
-  @override
   Uint8List toBytes(Network network) {
-    payload = transaction.toBytes();
-    return super.toBytes(network);
+    final payload = transaction.toBytes();
+    final msgHeader = MessageHeader(command: 'tx', payload: payload);
+    return msgHeader.toBytes(network);
   }
 
   factory MessageTransaction.fromBytes(Uint8List bytes) {
     if (bytes.isEmpty) {
       throw FormatException('Transaction message bytes cannot be empty');
     }
-    return MessageTransaction(
-      transaction: Transaction.fromBytes(bytes),
-      payload: bytes,
-    );
+    return MessageTransaction(transaction: Transaction.fromBytes(bytes));
   }
 }
 
@@ -702,22 +741,23 @@ class Address {
 class MessageAddress extends Message {
   List<Address> addresses;
 
-  MessageAddress({required this.addresses, required super.payload})
-    : super(command: 'addr') {
+  MessageAddress({required this.addresses}) {
     if (addresses.isEmpty) {
       throw ArgumentError('Addresses cannot be empty');
     }
   }
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(compactSize(addresses.length));
     for (final address in addresses) {
       payload.add(address.toBytes());
     }
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'addr',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageAddress.fromBytes(Uint8List bytes) {
@@ -737,7 +777,7 @@ class MessageAddress extends Message {
     if (addresses.isEmpty) {
       throw FormatException('Addresses cannot be empty');
     }
-    return MessageAddress(addresses: addresses, payload: bytes);
+    return MessageAddress(addresses: addresses);
   }
 }
 
@@ -748,8 +788,7 @@ class MessageGetHeaders extends Message {
   MessageGetHeaders({
     this.version = Message.version,
     required this.headerHashes,
-    required super.payload,
-  }) : super(command: 'getheaders') {
+  }) {
     if (headerHashes.isEmpty) {
       throw ArgumentError('Header hashes cannot be empty');
     }
@@ -758,7 +797,6 @@ class MessageGetHeaders extends Message {
     }
   }
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(
@@ -769,8 +807,11 @@ class MessageGetHeaders extends Message {
       payload.add(hash);
     }
     payload.add(Uint8List(32)); // Stop hash (32 bytes of zeros)
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'getheaders',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageGetHeaders.fromBytes(Uint8List bytes) {
@@ -799,21 +840,15 @@ class MessageGetHeaders extends Message {
       throw FormatException('Last header hash must be 32 bytes of zeros');
     }
     headerHashes.removeLast(); // Remove the stop hash
-    return MessageGetHeaders(
-      version: version,
-      headerHashes: headerHashes,
-      payload: bytes,
-    );
+    return MessageGetHeaders(version: version, headerHashes: headerHashes);
   }
 }
 
 class MessageHeaders extends Message {
   List<BlockHeader> headers;
 
-  MessageHeaders({required this.headers, required super.payload})
-    : super(command: 'headers');
+  MessageHeaders({required this.headers});
 
-  @override
   Uint8List toBytes(Network network) {
     final payload = BytesBuilder();
     payload.add(compactSize(headers.length));
@@ -821,8 +856,11 @@ class MessageHeaders extends Message {
       payload.add(header.toBytes());
       payload.add([0x00]); // additional 0x00 ('transaction count') suffix
     }
-    this.payload = payload.toBytes();
-    return super.toBytes(network);
+    final msgHeader = MessageHeader(
+      command: 'headers',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
   }
 
   factory MessageHeaders.fromBytes(Uint8List bytes) {
@@ -843,6 +881,6 @@ class MessageHeaders extends Message {
         'Expected ${cspr.value} headers, but found ${headers.length}',
       );
     }
-    return MessageHeaders(headers: headers, payload: bytes);
+    return MessageHeaders(headers: headers);
   }
 }

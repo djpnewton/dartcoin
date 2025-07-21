@@ -113,7 +113,7 @@ class Node {
     throw Exception('No valid IP address found for DNS seed: $randomSeed');
   }
 
-  void logMessage(Peer peer, Message message) {
+  void logMessage(Peer peer, Message message, MessageHeader msgHeader) {
     if (message is MessageVersion) {
       _log.info(
         '<<<<<: ${peer.ip}:${peer.port}, Version: ${message.version}, User Agent: ${message.userAgent}, Last Block: ${message.lastBlock}',
@@ -189,10 +189,10 @@ class Node {
     }
 
     _log.info(
-      '       Command:  ${message.command}\n'
-      '                                         Size:     ${message.payload.length} bytes\n'
-      '                                         Checksum: ${Message.checksum(message.payload).toHex()}\n',
-      //'                                         Payload:  ${message.payload.toHex()}',
+      '       Command:  ${msgHeader.command}\n'
+      '                                         Size:     ${msgHeader.payload.length} bytes\n'
+      '                                         Checksum: ${MessageHeader.checksum(msgHeader.payload).toHex()}\n',
+      //'                                         Payload:  ${msgHeader.payload.toHex()}',
     );
   }
 
@@ -207,27 +207,14 @@ class Node {
       socket.add(
         MessageGetHeaders(
           headerHashes: [blockHeaders.last.hash()],
-          payload: Uint8List(
-            0,
-          ), // TODO: not nice to need to put this dummy value here
         ).toBytes(network),
       );
     } else if (message is MessagePing) {
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Pong');
-      socket.add(
-        MessagePong(
-          nonce: message.nonce,
-          payload: Uint8List(0),
-        ).toBytes(network),
-      );
+      socket.add(MessagePong(nonce: message.nonce).toBytes(network));
     } else if (message is MessageInv) {
       _log.info('>>>>>: ${peer.ip}:${peer.port}, GetData');
-      socket.add(
-        MessageGetData(
-          inventory: message.inventory,
-          payload: message.payload,
-        ).toBytes(network),
-      );
+      socket.add(MessageGetData(inventory: message.inventory).toBytes(network));
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
     } else if (message is MessageHeaders) {
@@ -238,9 +225,6 @@ class Node {
         socket.add(
           MessageGetHeaders(
             headerHashes: [blockHeaders.last.hash()],
-            payload: Uint8List(
-              0,
-            ), // TODO: not nice to need to put this dummy value here
           ).toBytes(network),
         );
       }
@@ -268,9 +252,6 @@ class Node {
         userAgent: userAgent,
         lastBlock: 0,
         relay: false,
-        payload: Uint8List(
-          0,
-        ), // TODO: not nice to need to put this dummy value here
       ).toBytes(network);
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Version');
       socket.add(versionBytes);
@@ -286,15 +267,19 @@ class Node {
             var breakLoop = false;
             while (msgBuffer.isNotEmpty && !breakLoop) {
               // test if msgBuffer has full message data
-              final result = Message.parse(msgBuffer, network);
+              final result = MessageHeader.parse(msgBuffer, network);
               switch (result) {
                 case Ok():
-                  final message = Message.fromBytes(msgBuffer, network);
-                  logMessage(peer, message);
+                  final (message, msgHeader) = Message.fromBytes(
+                    msgBuffer,
+                    network,
+                  );
+                  logMessage(peer, message, msgHeader);
                   replyMessage(peer, message, socket);
                   // reset msgBuffer
                   msgBuffer = msgBuffer.sublist(
-                    Message.messageHeaderSize + message.payload.length,
+                    MessageHeader.messageHeaderSize +
+                        result.value.payload.length,
                   );
                 case Error():
                   // still waiting for data to complete payload
