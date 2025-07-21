@@ -154,7 +154,14 @@ class Node {
   void blockHeadersWrite() {
     final headersFile = File(blockHeadersFilePath);
     final headersJson = jsonEncode(
-      blockHeaders.map((header) => [_reverseHash(header.hash()).toHex(), header.toBytes().toHex()]).toList(),
+      blockHeaders
+          .map(
+            (header) => [
+              _reverseHash(header.hash()).toHex(),
+              header.toBytes().toHex(),
+            ],
+          )
+          .toList(),
     );
     headersFile.writeAsStringSync(headersJson);
     _log.info('Block headers written to file: $blockHeadersFilePath');
@@ -266,7 +273,9 @@ class Node {
       _log.info('>>>>>: ${peer.ip}:${peer.port}, Verack');
       socket.add(MessageVerack().toBytes(network));
       // also start requesting block headers
-      _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}');
+      _log.info(
+        '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}',
+      );
       socket.add(
         MessageGetHeaders(
           headerHashes: [blockHeaders.last.hash()],
@@ -288,7 +297,9 @@ class Node {
       if (addHeaders(message.headers) &&
           message.headers.length == maxBlockHeaders) {
         // request next batch of block headers
-        _log.info('>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}');
+        _log.info(
+          '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}',
+        );
         socket.add(
           MessageGetHeaders(
             headerHashes: [blockHeaders.last.hash()],
