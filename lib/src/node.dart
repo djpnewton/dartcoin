@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -6,9 +5,9 @@ import 'package:logging/logging.dart';
 
 import 'utils.dart';
 import 'p2p_messages.dart';
-import 'block.dart';
 import 'common.dart';
 import 'result.dart';
+import 'chain.dart';
 
 final _log = Logger('Node');
 
@@ -48,21 +47,22 @@ class Peer {
 }
 
 class Node {
-  static const int difficultyAdjustmentInterval = 2016;
-  static const int maxTimewarp = 600;
   static const int maxBlockHeaders = 2000;
 
   Map<Peer, Socket> connections = {};
-  List<BlockHeader> blockHeaders = [];
-  late String dataDir;
   String userAgent = '/dartcoin:0.1/';
   Network network;
+  late String dataDir;
+  late ChainManager chainManager;
 
   Node({required this.network}) {
     // initialize the data directory
     dataDir = initDataDir(network);
-    // initialize the block headers
-    blockHeaders = initBlockHeaders(network);
+    // initialize the chain manager
+    chainManager = ChainManager(
+      network: network,
+      blockHeadersFilePath: blockHeadersFilePath,
+    );
   }
 
   static int defaultPort(Network network) {
@@ -132,55 +132,6 @@ class Node {
 
   String get blockHeadersFilePath {
     return '$dataDir/headers.json';
-  }
-
-  List<BlockHeader> blockHeadersRead() {
-    final headersFile = File(blockHeadersFilePath);
-    if (headersFile.existsSync()) {
-      _log.info('Block headers file found: $blockHeadersFilePath');
-      final headersJson = headersFile.readAsStringSync();
-      final headers = (jsonDecode(headersJson) as List)
-          .map(
-            (headerData) =>
-                BlockHeader.fromBytes((headerData[1] as String).toBytes()),
-          )
-          .toList();
-      _log.info('Loaded ${headers.length} block headers from file');
-      return headers;
-    }
-    return [];
-  }
-
-  void blockHeadersWrite() {
-    final headersFile = File(blockHeadersFilePath);
-    final headersJson = jsonEncode(
-      blockHeaders
-          .map(
-            (header) => [
-              _reverseHash(header.hash()).toHex(),
-              header.toBytes().toHex(),
-            ],
-          )
-          .toList(),
-    );
-    headersFile.writeAsStringSync(headersJson);
-    _log.info('Block headers written to file: $blockHeadersFilePath');
-  }
-
-  List<BlockHeader> initBlockHeaders(Network network) {
-    final genesisBlock = Block.genesisBlock(network);
-    // check for block headers file
-    final headers = blockHeadersRead();
-    if (headers.isNotEmpty) {
-      if (headers.first.hash().toHex() == genesisBlock.header.hash().toHex()) {
-        return headers;
-      }
-      _log.warning(
-        'Genesis block header hash mismatch: ${headers.first.hash().toHex()} != ${genesisBlock.header.hash().toHex()}',
-      );
-    }
-    // if no headers file or mismatch, use genesis block header
-    return [genesisBlock.header];
   }
 
   void logMessage(Peer peer, Message message, MessageHeader msgHeader) {
@@ -266,6 +217,17 @@ class Node {
     );
   }
 
+  List<Uint8List> get _recentBlockHeadersHashes {
+    return chainManager
+        .blockHeadersTake(
+          chainManager.best.height + 1 < ChainManager.maxReorgDepth
+              ? chainManager.best.height + 1
+              : ChainManager.maxReorgDepth,
+        )
+        .map((header) => header.hash())
+        .toList();
+  }
+
   void handleMessage(Peer peer, Message message, Socket socket) {
     if (message is MessageVersion) {
     } else if (message is MessageVerack) {
@@ -274,11 +236,11 @@ class Node {
       socket.add(MessageVerack().toBytes(network));
       // also start requesting block headers
       _log.info(
-        '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}',
+        '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.best.header.hash()).toHex()}',
       );
       socket.add(
         MessageGetHeaders(
-          headerHashes: [blockHeaders.last.hash()],
+          headerHashes: _recentBlockHeadersHashes,
         ).toBytes(network),
       );
     } else if (message is MessagePing) {
@@ -291,18 +253,18 @@ class Node {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
       // add the block to the block headers
-      addHeaders([message.block.header]);
+      chainManager.addHeaders([message.block.header]);
     } else if (message is MessageHeaders) {
       // add the headers to the blockHeaders list
-      if (addHeaders(message.headers) &&
+      if (chainManager.addHeaders(message.headers) &&
           message.headers.length == maxBlockHeaders) {
         // request next batch of block headers
         _log.info(
-          '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${_reverseHash(blockHeaders.last.hash()).toHex()}',
+          '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.best.header.hash()).toHex()}',
         );
         socket.add(
           MessageGetHeaders(
-            headerHashes: [blockHeaders.last.hash()],
+            headerHashes: _recentBlockHeadersHashes,
           ).toBytes(network),
         );
       }
@@ -391,173 +353,5 @@ class Node {
         'Failed to connect to peer: ${peer.ip}:${peer.port}, Error: $error',
       );
     }
-  }
-
-  bool checkMedianTimePast(BlockHeader header) {
-    // block time must be greater then the median time of the last 11 blocks
-    if (blockHeaders.length < 11) {
-      return true; // not enough headers to check median time
-    }
-    final last11Headers = blockHeaders.sublist(
-      blockHeaders.length - 11,
-      blockHeaders.length,
-    );
-    last11Headers.sort((a, b) => a.time.compareTo(b.time));
-    final medianTime = last11Headers[5].time; // 6th element is the median
-    if (header.time <= medianTime) {
-      _log.warning(
-        'Received header with invalid timestamp: ${header.time}, median time: $medianTime',
-      );
-      return false;
-    }
-    return true;
-  }
-
-  int calcNextWorkRequired(BlockHeader header) {
-    // convert bits to target
-    var currentBits = blockHeaders.last.nBits;
-    if (network == Network.testnet4) {
-      // bip 94 rule on testnet4
-      currentBits =
-          blockHeaders[blockHeaders.length - difficultyAdjustmentInterval]
-              .nBits;
-    }
-    final target = BlockHeader.bitsToTarget(currentBits);
-    // recalculate the difficulty
-    var actualTimespan =
-        blockHeaders.last.time -
-        blockHeaders[blockHeaders.length - difficultyAdjustmentInterval].time;
-    final expectedTimespan = 14 * 24 * 60 * 60; // 14 days in seconds
-    if (actualTimespan < expectedTimespan ~/ 4) {
-      _log.info(
-        'Actual timespan is less than 1/4 of expected: $actualTimespan < ${expectedTimespan ~/ 4}',
-      );
-      actualTimespan = expectedTimespan ~/ 4;
-    }
-    if (actualTimespan > expectedTimespan * 4) {
-      _log.info(
-        'Actual timespan is more than 4x of expected: $actualTimespan > ${expectedTimespan * 4}',
-      );
-      actualTimespan = expectedTimespan * 4;
-    }
-    final ratio = actualTimespan / expectedTimespan;
-    _log.info(
-      'Ratio: $ratio, Actual Timespan: $actualTimespan, Expected Timespan: $expectedTimespan',
-    );
-    final newTarget =
-        (target * BigInt.from(actualTimespan)) ~/ BigInt.from(expectedTimespan);
-    final newBits = BlockHeader.targetToBits(newTarget);
-    _log.info(
-      'Recalculating difficulty: Old Bits: ${currentBits.toRadixString(16)}, New Bits: ${newBits.toRadixString(16)}',
-    );
-    // check newBits is not greater than the genesis block's nBits
-    final genesisTarget = BlockHeader.bitsToTarget(blockHeaders.first.nBits);
-    if (newTarget > genesisTarget) {
-      _log.warning(
-        'New target is greater than genesis target: $newTarget > $genesisTarget',
-      );
-      return blockHeaders.first.nBits;
-    }
-    return newBits;
-  }
-
-  int getWork(BlockHeader header) {
-    // calculate new work on new epoch
-    if (blockHeaders.length % difficultyAdjustmentInterval == 0) {
-      return calcNextWorkRequired(header);
-    }
-    // reset the work required on testnet if the time between blocks is more than 20 minutes
-    if (network == Network.testnet || network == Network.testnet4) {
-      final lastTime = blockHeaders.last.time;
-      const resetTime = 20 * 60; // 20 minutes in seconds
-      var blockInterval = header.time - lastTime;
-      if (blockInterval > resetTime) {
-        _log.info(
-          'Resetting work required on testnet due to long time since last block: $blockInterval seconds',
-        );
-        return blockHeaders.first.nBits; // reset to the first block's nBits
-      } else if (blockHeaders.length > 2) {
-        // use the last non special minimum difficulty block
-        var blkIndex = blockHeaders.length - 1;
-        while (blkIndex > 0 &&
-            (blkIndex + 1) % difficultyAdjustmentInterval != 0 &&
-            blockHeaders[blkIndex].nBits == blockHeaders.first.nBits) {
-          blkIndex--;
-        }
-        return blockHeaders[blkIndex].nBits;
-      }
-    }
-    // otherwise, use the last block's nBits
-    return blockHeaders.last.nBits;
-  }
-
-  Uint8List _reverseHash(Uint8List hash) {
-    return Uint8List.fromList(hash.reversed.toList());
-  }
-
-  bool addHeaders(List<BlockHeader> headers) {
-    if (blockHeaders.isEmpty) {
-      _log.warning('No block headers available to validate against');
-      return false; // no headers to validate against
-    }
-    for (final header in headers) {
-      final headerHash = header.hash();
-      final headerHashReversed = _reverseHash(headerHash);
-      _log.info(
-        'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${blockHeaders.length}, time: ${header.time - blockHeaders.last.time}s',
-      );
-      _log.info('header bits:     ${header.nBits.toRadixString(16)}');
-      _log.info(
-        'header target:   ${BlockHeader.bitsToTarget(header.nBits).toRadixString(16).padLeft(64, '0')}',
-      );
-
-      // check the previous block header hash
-      if (blockHeaders.last.hash().toHex() !=
-          header.previousBlockHeaderHash.toHex()) {
-        _log.warning(
-          'Received header with previous hash mismatch: ${_reverseHash(header.previousBlockHeaderHash).toHex().padLeft(64, '0')}, expected: ${_reverseHash(blockHeaders.last.hash()).toHex().padLeft(64, '0')}',
-        );
-        return false; // abort adding headers
-      }
-      // check the median time past
-      if (!checkMedianTimePast(header)) {
-        return false; // abort adding headers
-      }
-      // check testnet4 timewarp rule (bip 94)
-      if (network == Network.testnet4) {
-        if (blockHeaders.length % difficultyAdjustmentInterval == 0 &&
-            blockHeaders.length > 1) {
-          if (header.time < blockHeaders.last.time - maxTimewarp) {
-            _log.warning(
-              'Received header with invalid time: ${header.time}, expected greater then or equal to ${blockHeaders.last.time - maxTimewarp}',
-            );
-            return false; // abort adding headers
-          }
-        }
-      }
-      // get the work required
-      final bits = getWork(header);
-      _log.info('Work required:   ${bits.toRadixString(16).padLeft(8, '0')}');
-      // check the work
-      if (bits != header.nBits) {
-        _log.warning(
-          'Received header with different nBits: ${header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
-        );
-        return false; // abort adding headers
-      }
-      final target = BlockHeader.bitsToTarget(bits);
-      final headerWork = bytesToBigInt(headerHashReversed);
-      if (headerWork > target) {
-        _log.warning(
-          'Received header with insufficient work: ${headerHashReversed.toHex().padLeft(64, '0')} (needed: ${target.toRadixString(16).padLeft(64, '0')})',
-        );
-        return false; // abort adding headers
-      }
-      blockHeaders.add(header);
-    }
-    _log.info('Added ${headers.length} headers, total: ${blockHeaders.length}');
-    // write the headers to file
-    blockHeadersWrite();
-    return true;
   }
 }
