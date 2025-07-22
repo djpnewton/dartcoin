@@ -22,24 +22,42 @@ abstract class Node<Self extends Node<Self>> {
 class ChainEntry extends Node<ChainEntry> {
   int height;
   BlockHeader header;
-  ChainEntry({required this.height, required this.header, super.previous});
+  BigInt work;
+  BigInt chainWork;
+  int timeCreated = DateTime.now().millisecondsSinceEpoch;
+  ChainEntry({
+    required this.height,
+    required this.header,
+    required this.work,
+    required this.chainWork,
+    super.previous,
+  });
 }
 
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
   static const int maxTimewarp = 600;
-  static const int maxReorgDepth = 5;
+  static const int maxReorgDepth = 50;
 
   final Network network;
   final String blockHeadersFilePath;
   late BlockHeader genesisBlockHeader;
-  late ChainEntry best;
-  List<ChainEntry> heads = [];
+  late ChainEntry bestChainHead;
+  List<ChainEntry> chainHeads = [];
 
   ChainManager({required this.network, required this.blockHeadersFilePath}) {
     genesisBlockHeader = Block.genesisBlock(network).header;
-    best = _initBestHeader(network);
-    heads.add(best);
+    bestChainHead = _initBestHeader(network);
+    chainHeads.add(bestChainHead);
+  }
+
+  BigInt _minumumChainWork(Network network) {
+    // TODO: update and use the actual minimum chain work for each network
+    return switch (network) {
+      Network.mainnet => BigInt.parse('0x00'),
+      Network.testnet => BigInt.parse('0x00'),
+      Network.testnet4 => BigInt.parse('0x00'),
+    };
   }
 
   ChainEntry _initBestHeader(Network network) {
@@ -47,29 +65,33 @@ class ChainManager {
     // check for block headers file
     final headers = _blockHeadersRead();
     if (headers.isNotEmpty) {
-      if (headers.first.hash().toHex() == genesisBlock.header.hash().toHex()) {
+      if (_compareHashes(headers.first.hash(), genesisBlock.header.hash())) {
         ChainEntry? previous;
-        ChainEntry head = ChainEntry(
-          height: 0,
-          header: headers.first,
-          previous: null,
-        );
+        ChainEntry? chainHead;
         for (final header in headers) {
-          head = ChainEntry(
-            height: (previous?.height ?? -1) + 1,
-            header: header,
-            previous: previous,
-          );
-          previous = head;
+          chainHead = _makeChainEntry(header, previous);
+          previous = chainHead;
         }
-        return head;
+        return chainHead!;
       }
       _log.warning(
         'Genesis block header hash mismatch: ${headers.first.hash().toHex()} != ${genesisBlock.header.hash().toHex()}',
       );
     }
     // if no headers file or mismatch, use genesis block header
-    return ChainEntry(height: 0, header: genesisBlock.header, previous: null);
+    return _makeChainEntry(genesisBlock.header, null);
+  }
+
+  bool _compareHashes(Uint8List hash1, Uint8List hash2) {
+    if (hash1.length != hash2.length) {
+      return false;
+    }
+    for (int i = 0; i < hash1.length; i++) {
+      if (hash1[i] != hash2[i]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   List<BlockHeader> _blockHeadersRead() {
@@ -105,9 +127,9 @@ class ChainManager {
     _log.info('Block headers written to file: $blockHeadersFilePath');
   }
 
-  List<BlockHeader> blockHeadersTake(int count) {
+  List<BlockHeader> _blockHeadersTake(ChainEntry ce, int count) {
     final headers = <BlockHeader>[];
-    var current = best;
+    var current = ce;
     for (int i = 0; i < count; i++) {
       headers.add(current.header);
       if (headers.length == count) {
@@ -121,48 +143,112 @@ class ChainManager {
     return headers;
   }
 
-  BlockHeader blockHeaderGet(int height) {
-    if (height < 0 || height > best.height) {
-      throw RangeError('Height $height is out of range (0-${best.height})');
+  BlockHeader _blockHeaderGet(ChainEntry ce, int height) {
+    if (height < 0 || height > ce.height) {
+      throw RangeError('Height $height is out of range (0-${ce.height})');
     }
-    var current = best;
+    var current = ce;
     while (current.height > height) {
       current = current.previous!;
     }
     return current.header;
   }
 
-  bool _checkMedianTimePast(BlockHeader header) {
+  List<Uint8List> get recentBlockHeadersHashes {
+    return _blockHeadersTake(
+      bestChainHead,
+      bestChainHead.height + 1 < maxReorgDepth ? bestChainHead.height + 1 : maxReorgDepth,
+    ).map((header) => header.hash()).toList();
+  }
+
+  ChainEntry _makeChainEntry(BlockHeader header, ChainEntry? previous) {
+    final work = header.work();
+    return ChainEntry(
+      height: (previous?.height ?? -1) + 1,
+      header: header,
+      work: work,
+      chainWork: (previous?.chainWork ?? BigInt.zero) + work,
+      previous: previous,
+    );
+  }
+
+  ChainEntry? _findNewChainHead(BlockHeader header) {
+    _log.info(
+      'Finding new chainhead for header: ${reverseHash(header.hash()).toHex().padLeft(64, '0')} (prev: ${reverseHash(header.previousBlockHeaderHash).toHex().padLeft(64, '0')})',
+    );
+    // check if the header builds on the best chainhead (should be most common case)
+    if (_compareHashes(bestChainHead.header.hash(), header.previousBlockHeaderHash)) {
+      return _makeChainEntry(header, bestChainHead);
+    }
+    // check if the header builds on one of the chainheads
+    for (final chainHead in chainHeads) {
+      if (_compareHashes(chainHead.header.hash(), header.previousBlockHeaderHash)) {
+        return _makeChainEntry(header, chainHead);
+      }
+    }
+    // check if the header is a reorg of one of the heads (up to maxReorgDepth)
+    for (final chainHead in chainHeads) {
+      if (chainHead.height < bestChainHead.height - maxReorgDepth) continue;
+      final initialHeight = chainHead.height;
+      ChainEntry? current = chainHead;
+      while (current != null &&
+          current.height >= 0 &&
+          current.height >= initialHeight - maxReorgDepth) {
+        if (_compareHashes(
+          current.header.hash(),
+          header.previousBlockHeaderHash,
+        )) {
+          return _makeChainEntry(header, current);
+        }
+        current = current.previous;
+      }
+    }
+    return null; // no new chainhead found
+  }
+
+  bool _checkMedianTimePast(ChainEntry newChainHead) {
+    if (newChainHead.previous == null) {
+      throw StateError('Cannot check median time past for the genesis block');
+    }
     // block time must be greater then the median time of the last 11 blocks
-    if (best.height + 1 < 11) {
+    if (newChainHead.height < 11) {
       return true; // not enough headers to check median time
     }
-    final last11Headers = blockHeadersTake(11);
+    final last11Headers = _blockHeadersTake(newChainHead.previous!, 11);
     last11Headers.sort((a, b) => a.time.compareTo(b.time));
     final medianTime = last11Headers[5].time; // 6th element is the median
-    if (header.time <= medianTime) {
+    if (newChainHead.header.time <= medianTime) {
       _log.warning(
-        'Received header with invalid timestamp: ${header.time}, median time: $medianTime',
+        'Received header with invalid timestamp: ${newChainHead.header.time}, median time: $medianTime',
       );
       return false;
     }
     return true;
   }
 
-  int _calcNextWorkRequired(BlockHeader header) {
+  int _calcNextWorkRequired(ChainEntry newChainHead) {
+    if (newChainHead.previous == null) {
+      throw StateError(
+        'Cannot calculate next work required for the genesis block',
+      );
+    }
     // convert bits to target
-    var currentBits = best.header.nBits;
+    var currentBits = newChainHead.previous!.header.nBits;
     if (network == Network.testnet4) {
       // bip 94 rule on testnet4
-      currentBits = blockHeaderGet(
-        best.height - (difficultyAdjustmentInterval - 1),
+      currentBits = _blockHeaderGet(
+        newChainHead,
+        newChainHead.height - difficultyAdjustmentInterval,
       ).nBits;
     }
     final target = BlockHeader.bitsToTarget(currentBits);
     // recalculate the difficulty
     var actualTimespan =
-        best.header.time -
-        blockHeaderGet(best.height - (difficultyAdjustmentInterval - 1)).time;
+        newChainHead.previous!.header.time -
+        _blockHeaderGet(
+          newChainHead,
+          newChainHead.height - difficultyAdjustmentInterval,
+        ).time;
     final expectedTimespan = 14 * 24 * 60 * 60; // 14 days in seconds
     if (actualTimespan < expectedTimespan ~/ 4) {
       _log.info(
@@ -197,24 +283,27 @@ class ChainManager {
     return newBits;
   }
 
-  int _getWork(BlockHeader header) {
+  int _getNextWork(ChainEntry newChainHead) {
+    if (newChainHead.previous == null) {
+      throw StateError('Cannot get next work for the genesis block');
+    }
     // calculate new work on new epoch
-    if ((best.height + 1) % difficultyAdjustmentInterval == 0) {
-      return _calcNextWorkRequired(header);
+    if (newChainHead.height % difficultyAdjustmentInterval == 0) {
+      return _calcNextWorkRequired(newChainHead);
     }
     // reset the work required on testnet if the time between blocks is more than 20 minutes
     if (network == Network.testnet || network == Network.testnet4) {
-      final lastTime = best.header.time;
+      final lastTime = newChainHead.previous!.header.time;
       const resetTime = 20 * 60; // 20 minutes in seconds
-      var blockInterval = header.time - lastTime;
+      var blockInterval = newChainHead.header.time - lastTime;
       if (blockInterval > resetTime) {
         _log.info(
           'Resetting work required on testnet due to long time since last block: $blockInterval seconds',
         );
         return genesisBlockHeader.nBits; // reset to the first block's nBits
-      } else if (best.height > 2) {
+      } else if (newChainHead.previous!.height > 2) {
         // use the last non special minimum difficulty block
-        ChainEntry? current = best;
+        ChainEntry? current = newChainHead.previous;
         while (current != null &&
             (current.height + 1) % difficultyAdjustmentInterval != 0 &&
             current.header.nBits == genesisBlockHeader.nBits) {
@@ -224,54 +313,98 @@ class ChainManager {
       }
     }
     // otherwise, use the last block's nBits
-    return best.header.nBits;
+    return newChainHead.previous!.header.nBits;
+  }
+
+  void _updateHeads(ChainEntry newChainHead) {
+    // 1) check if the new chainhead can replace one of the existing heads
+    var replacedHead = false;
+    for (final chainHead in chainHeads) {
+      if (_compareHashes(
+        chainHead.header.hash(),
+        newChainHead.header.previousBlockHeaderHash,
+      )) {
+        // remove the old chainhead
+        chainHeads.remove(chainHead);
+        // add the new chainhead
+        chainHeads.add(newChainHead);
+        // set 'replacedHead' and break
+        replacedHead = true;
+        break;
+      }
+    }
+    // 2) if the new chainhead does not replace any existing chainhead it must be a reorg so add it as a new chainhead
+    if (!replacedHead) {
+      chainHeads.add(newChainHead);
+    }
+    // 3) find the new best chainhead based on chain work (and time created)
+    List<ChainEntry> candidates = [];
+    for (final chainHead in chainHeads) {
+      if (candidates.isEmpty || chainHead.chainWork > candidates.first.chainWork) {
+        candidates.clear();
+        candidates.add(chainHead);
+      } else if (chainHead.chainWork == candidates.first.chainWork) {
+        candidates.add(chainHead);
+      }
+    }
+    if (candidates.length == 1) {
+      bestChainHead = candidates.first;
+    } else {
+      // if there are multiple candidates, choose the one with earliest timeCreated
+      candidates.sort((a, b) => a.timeCreated.compareTo(b.timeCreated));
+      bestChainHead = candidates.first;
+    }
+  }
+
+  void _cleanHeads() {
+    // remove chainheads that are too far behind the best chainhead
+    chainHeads.removeWhere((chainHead) => chainHead.height < bestChainHead.height - maxReorgDepth);
   }
 
   bool addHeaders(List<BlockHeader> headers) {
+    final initialBest = bestChainHead;
     for (final header in headers) {
-      final headerHash = header.hash();
-      final headerHashReversed = reverseHash(headerHash);
-      _log.info(
-        'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${best.height}, time: ${header.time - best.header.time}s',
-      );
-      _log.info('header bits:     ${header.nBits.toRadixString(16)}');
-      _log.info(
-        'header target:   ${BlockHeader.bitsToTarget(header.nBits).toRadixString(16).padLeft(64, '0')}',
-      );
-
-      //TODO: deal with reorgs
-
-      // check the previous block header hash
-      if (best.header.hash().toHex() !=
-          header.previousBlockHeaderHash.toHex()) {
+      // create new chainhead from block header
+      final newChainHead = _findNewChainHead(header);
+      if (newChainHead == null) {
         _log.warning(
-          'Received header with previous hash mismatch: ${reverseHash(header.previousBlockHeaderHash).toHex().padLeft(64, '0')}, expected: ${reverseHash(best.header.hash()).toHex().padLeft(64, '0')}',
+          'Received header does not build on (or reorg) any known chainhead',
         );
         return false; // abort adding headers
       }
+      final headerHash = newChainHead.header.hash();
+      final headerHashReversed = reverseHash(headerHash);
+      _log.info(
+        'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${newChainHead.height}, time: ${newChainHead.header.time - newChainHead.previous!.header.time}s',
+      );
+      _log.info('header bits:     ${newChainHead.header.nBits.toRadixString(16)}');
+      _log.info(
+        'header target:   ${BlockHeader.bitsToTarget(newChainHead.header.nBits).toRadixString(16).padLeft(64, '0')}',
+      );
       // check the median time past
-      if (!_checkMedianTimePast(header)) {
+      if (!_checkMedianTimePast(newChainHead)) {
         return false; // abort adding headers
       }
       // check testnet4 timewarp rule (bip 94)
       if (network == Network.testnet4) {
-        if ((best.height + 1) % difficultyAdjustmentInterval == 0 &&
-            best.height > 0) {
-          if (header.time < best.header.time - maxTimewarp) {
+        if (newChainHead.height % difficultyAdjustmentInterval == 0 &&
+            newChainHead.previous!.height > 0) {
+          if (newChainHead.header.time <
+              newChainHead.previous!.header.time - maxTimewarp) {
             _log.warning(
-              'Received header with invalid time: ${header.time}, expected greater then or equal to ${best.header.time - maxTimewarp}',
+              'Received header with invalid time: ${newChainHead.header.time}, expected greater then or equal to ${newChainHead.previous!.header.time - maxTimewarp}',
             );
             return false; // abort adding headers
           }
         }
       }
       // get the work required
-      final bits = _getWork(header);
+      final bits = _getNextWork(newChainHead);
       _log.info('Work required:   ${bits.toRadixString(16).padLeft(8, '0')}');
       // check the work
-      if (bits != header.nBits) {
+      if (bits != newChainHead.header.nBits) {
         _log.warning(
-          'Received header with different nBits: ${header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
+          'Received header with different nBits: ${newChainHead.header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
         );
         return false; // abort adding headers
       }
@@ -283,23 +416,25 @@ class ChainManager {
         );
         return false; // abort adding headers
       }
-      // set new best
-      best = ChainEntry(
-        height: best.height + 1,
-        header: header,
-        previous: best,
-      );
+      // update heads
+      _updateHeads(newChainHead);
     }
-    _log.info('Added ${headers.length} headers, height: ${best.height}');
+    _log.info(
+      'Added ${headers.length} headers, new height: ${bestChainHead.height}, chain work: ${bestChainHead.chainWork.toRadixString(16)}',
+    );
     // write the headers to file
-    final blockHeaders = <BlockHeader>[];
-    ChainEntry? current = best;
-    while (current != null) {
-      blockHeaders.add(current.header);
-      current = current.previous;
+    if (!_compareHashes(bestChainHead.header.hash(), initialBest.header.hash())) {
+      final blockHeaders = <BlockHeader>[];
+      ChainEntry? current = bestChainHead;
+      while (current != null) {
+        blockHeaders.add(current.header);
+        current = current.previous;
+      }
+      // TODO: change to write only new headers (change file format to CSV for easier appending?)
+      _blockHeadersWrite(blockHeaders.reversed.toList());
     }
-    // TODO: change to write only new headers (change file format to CSV for easier appending?)
-    _blockHeadersWrite(blockHeaders.reversed.toList());
+    // clean chainheads
+    _cleanHeads();
     return true;
   }
 }

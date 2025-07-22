@@ -13,6 +13,7 @@ class BlockHeader {
   int nonce;
 
   static const int blockHeaderSize = 80;
+  static BigInt maxTarget = BigInt.from(2).pow(256);
 
   BlockHeader({
     required this.version,
@@ -42,6 +43,11 @@ class BlockHeader {
   }
 
   Uint8List hash() => hash256(toBytes());
+
+  BigInt work() {
+    final target = bitsToTarget(nBits);
+    return maxTarget ~/ (target + BigInt.one);
+  }
 
   Uint8List toBytes() {
     final buffer = BytesBuilder();

@@ -217,17 +217,6 @@ class Node {
     );
   }
 
-  List<Uint8List> get _recentBlockHeadersHashes {
-    return chainManager
-        .blockHeadersTake(
-          chainManager.best.height + 1 < ChainManager.maxReorgDepth
-              ? chainManager.best.height + 1
-              : ChainManager.maxReorgDepth,
-        )
-        .map((header) => header.hash())
-        .toList();
-  }
-
   void handleMessage(Peer peer, Message message, Socket socket) {
     if (message is MessageVersion) {
     } else if (message is MessageVerack) {
@@ -240,7 +229,7 @@ class Node {
       );
       socket.add(
         MessageGetHeaders(
-          headerHashes: _recentBlockHeadersHashes,
+          headerHashes: chainManager.recentBlockHeadersHashes,
         ).toBytes(network),
       );
     } else if (message is MessagePing) {
@@ -264,7 +253,7 @@ class Node {
         );
         socket.add(
           MessageGetHeaders(
-            headerHashes: _recentBlockHeadersHashes,
+            headerHashes: chainManager.recentBlockHeadersHashes,
           ).toBytes(network),
         );
       }
