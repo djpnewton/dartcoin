@@ -131,7 +131,7 @@ class Node {
   }
 
   String get blockHeadersFilePath {
-    return '$dataDir/headers.json';
+    return '$dataDir/headers.csv';
   }
 
   void logMessage(Peer peer, Message message, MessageHeader msgHeader) {
@@ -225,7 +225,7 @@ class Node {
       socket.add(MessageVerack().toBytes(network));
       // also start requesting block headers
       _log.info(
-        '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.best.header.hash()).toHex()}',
+        '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.bestChainHead.header.hash()).toHex()}',
       );
       socket.add(
         MessageGetHeaders(
@@ -249,7 +249,7 @@ class Node {
           message.headers.length == maxBlockHeaders) {
         // request next batch of block headers
         _log.info(
-          '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.best.header.hash()).toHex()}',
+          '>>>>>: ${peer.ip}:${peer.port}, GetHeaders: ${reverseHash(chainManager.bestChainHead.header.hash()).toHex()}',
         );
         socket.add(
           MessageGetHeaders(

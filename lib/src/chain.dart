@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -98,32 +97,61 @@ class ChainManager {
     final headersFile = File(blockHeadersFilePath);
     if (headersFile.existsSync()) {
       _log.info('Block headers file found: $blockHeadersFilePath');
-      final headersJson = headersFile.readAsStringSync();
-      final headers = (jsonDecode(headersJson) as List)
-          .map(
-            (headerData) =>
-                BlockHeader.fromBytes((headerData[1] as String).toBytes()),
-          )
-          .toList();
+      // read the headers CSV line by line
+      final headers = <BlockHeader>[];
+      headersFile.readAsLinesSync().forEach((line) {
+        // skip header line
+        if (line.startsWith('height,hash,header')) {
+          return;
+        }
+        final fields = line.split(',');
+        if (fields.length == 3) {
+          //final height = int.parse(fields[0]);
+          //final hash = Uint8List.fromList(fields[1].toBytes());
+          final header = BlockHeader.fromBytes(fields[2].toBytes());
+          headers.add(header);
+        }
+      });
       _log.info('Loaded ${headers.length} block headers from file');
       return headers;
     }
     return [];
   }
 
-  void _blockHeadersWrite(List<BlockHeader> blockHeaders) {
+  void _blockHeadersWriteOrAppend(List<ChainEntry> chainEntries) {
+    // convert block headers to CSV format
+    final csvData = StringBuffer();
+    if (chainEntries.isNotEmpty && chainEntries.first.previous == null) {
+      csvData.writeln('height,hash,header');
+    }
+    for (final entry in chainEntries) {
+      csvData.writeln(
+        '${entry.height.toString().padLeft(6, '0')},${reverseHash(entry.header.hash()).toHex()},${entry.header.toBytes().toHex()}',
+      );
+    }
+    // append or write to new file
     final headersFile = File(blockHeadersFilePath);
-    final headersJson = JsonEncoder.withIndent('  ').convert(
-      blockHeaders
-          .map(
-            (header) => [
-              reverseHash(header.hash()).toHex(),
-              header.toBytes().toHex(),
-            ],
-          )
-          .toList(),
-    );
-    headersFile.writeAsStringSync(headersJson);
+    if (headersFile.existsSync()) {
+      // check the last height in the file
+      final lines = headersFile.readAsLinesSync();
+      if (lines.isEmpty) {
+        throw StateError('Headers file is empty, cannot append new entries');
+      }
+      final lastHeight = int.tryParse(lines.last.split(',')[0]);
+      if (lastHeight == null) {
+        throw StateError('Invalid last height in headers file');
+      }
+      if (lastHeight != chainEntries.first.previous?.height) {
+        throw StateError(
+          'Last height in file ($lastHeight) does not match first height in new entries (${chainEntries.first.height})',
+        );
+      }
+      // write new entries to the file
+      headersFile.writeAsStringSync(csvData.toString(), mode: FileMode.append);
+    } else {
+      headersFile.createSync(recursive: true);
+      headersFile.writeAsStringSync(csvData.toString());
+    }
     _log.info('Block headers written to file: $blockHeadersFilePath');
   }
 
@@ -157,7 +185,9 @@ class ChainManager {
   List<Uint8List> get recentBlockHeadersHashes {
     return _blockHeadersTake(
       bestChainHead,
-      bestChainHead.height + 1 < maxReorgDepth ? bestChainHead.height + 1 : maxReorgDepth,
+      bestChainHead.height + 1 < maxReorgDepth
+          ? bestChainHead.height + 1
+          : maxReorgDepth,
     ).map((header) => header.hash()).toList();
   }
 
@@ -177,12 +207,18 @@ class ChainManager {
       'Finding new chainhead for header: ${reverseHash(header.hash()).toHex().padLeft(64, '0')} (prev: ${reverseHash(header.previousBlockHeaderHash).toHex().padLeft(64, '0')})',
     );
     // check if the header builds on the best chainhead (should be most common case)
-    if (_compareHashes(bestChainHead.header.hash(), header.previousBlockHeaderHash)) {
+    if (_compareHashes(
+      bestChainHead.header.hash(),
+      header.previousBlockHeaderHash,
+    )) {
       return _makeChainEntry(header, bestChainHead);
     }
     // check if the header builds on one of the chainheads
     for (final chainHead in chainHeads) {
-      if (_compareHashes(chainHead.header.hash(), header.previousBlockHeaderHash)) {
+      if (_compareHashes(
+        chainHead.header.hash(),
+        header.previousBlockHeaderHash,
+      )) {
         return _makeChainEntry(header, chainHead);
       }
     }
@@ -340,7 +376,8 @@ class ChainManager {
     // 3) find the new best chainhead based on chain work (and time created)
     List<ChainEntry> candidates = [];
     for (final chainHead in chainHeads) {
-      if (candidates.isEmpty || chainHead.chainWork > candidates.first.chainWork) {
+      if (candidates.isEmpty ||
+          chainHead.chainWork > candidates.first.chainWork) {
         candidates.clear();
         candidates.add(chainHead);
       } else if (chainHead.chainWork == candidates.first.chainWork) {
@@ -358,11 +395,14 @@ class ChainManager {
 
   void _cleanHeads() {
     // remove chainheads that are too far behind the best chainhead
-    chainHeads.removeWhere((chainHead) => chainHead.height < bestChainHead.height - maxReorgDepth);
+    chainHeads.removeWhere(
+      (chainHead) => chainHead.height < bestChainHead.height - maxReorgDepth,
+    );
   }
 
   bool addHeaders(List<BlockHeader> headers) {
     final initialBest = bestChainHead;
+    final initialBestIsGenesis = bestChainHead.height == 0;
     for (final header in headers) {
       // create new chainhead from block header
       final newChainHead = _findNewChainHead(header);
@@ -377,7 +417,9 @@ class ChainManager {
       _log.info(
         'Received header: ${headerHashReversed.toHex().padLeft(64, '0')}, height: ${newChainHead.height}, time: ${newChainHead.header.time - newChainHead.previous!.header.time}s',
       );
-      _log.info('header bits:     ${newChainHead.header.nBits.toRadixString(16)}');
+      _log.info(
+        'header bits:     ${newChainHead.header.nBits.toRadixString(16)}',
+      );
       _log.info(
         'header target:   ${BlockHeader.bitsToTarget(newChainHead.header.nBits).toRadixString(16).padLeft(64, '0')}',
       );
@@ -423,15 +465,23 @@ class ChainManager {
       'Added ${headers.length} headers, new height: ${bestChainHead.height}, chain work: ${bestChainHead.chainWork.toRadixString(16)}',
     );
     // write the headers to file
-    if (!_compareHashes(bestChainHead.header.hash(), initialBest.header.hash())) {
-      final blockHeaders = <BlockHeader>[];
+    if (!_compareHashes(
+      bestChainHead.header.hash(),
+      initialBest.header.hash(),
+    )) {
+      final chainEntries = <ChainEntry>[];
       ChainEntry? current = bestChainHead;
-      while (current != null) {
-        blockHeaders.add(current.header);
+      // collect all new chain entries (include initial best if it is the genesis block)
+      while (current != null &&
+          (initialBestIsGenesis ||
+              !_compareHashes(
+                current.header.hash(),
+                initialBest.header.hash(),
+              ))) {
+        chainEntries.add(current);
         current = current.previous;
       }
-      // TODO: change to write only new headers (change file format to CSV for easier appending?)
-      _blockHeadersWrite(blockHeaders.reversed.toList());
+      _blockHeadersWriteOrAppend(chainEntries.reversed.toList());
     }
     // clean chainheads
     _cleanHeads();
