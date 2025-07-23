@@ -22,3 +22,4 @@ export 'src/sha512.dart';
 // p2p
 export 'src/node.dart';
 export 'src/p2p_messages.dart';
+export 'src/peer.dart';

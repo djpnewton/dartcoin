@@ -33,52 +33,72 @@ class ChainEntry extends Node<ChainEntry> {
   });
 }
 
+enum ChainStatus {
+  headerSync, // syncing headers from peers
+  active, // activated chain, read/write operations allowed
+}
+
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
   static const int maxTimewarp = 600;
   static const int maxReorgDepth = 50;
 
   final Network network;
-  final String blockHeadersFilePath;
-  late BlockHeader genesisBlockHeader;
-  late ChainEntry bestChainHead;
-  List<ChainEntry> chainHeads = [];
+  late ChainStatus _status;
+  final String _blockHeadersFilePath;
+  late final BlockHeader _genesisBlockHeader;
+  late ChainEntry _bestChainHead;
+  final List<ChainEntry> _chainHeads = [];
+  ChainEntry? _fileChainHead;
 
-  ChainManager({required this.network, required this.blockHeadersFilePath}) {
-    genesisBlockHeader = Block.genesisBlock(network).header;
-    bestChainHead = _initBestHeader(network);
-    chainHeads.add(bestChainHead);
+  ChainStatus get status => _status;
+  ChainEntry get bestChainHead => _bestChainHead;
+
+  ChainManager({required this.network, required String blockHeadersFilePath})
+    : _blockHeadersFilePath = blockHeadersFilePath {
+    _status = ChainStatus.headerSync;
+    _genesisBlockHeader = Block.genesisBlock(network).header;
+    _bestChainHead = _initBestHeader(network);
+    _chainHeads.add(_bestChainHead);
   }
 
   BigInt _minumumChainWork(Network network) {
-    // TODO: update and use the actual minimum chain work for each network
     return switch (network) {
-      Network.mainnet => BigInt.parse('0x00'),
-      Network.testnet => BigInt.parse('0x00'),
-      Network.testnet4 => BigInt.parse('0x00'),
+      Network.mainnet => BigInt.parse(
+        '0x0000000000000000000000000000000000000000b1f3b93b65b16d035a82be84',
+      ),
+      Network.testnet => BigInt.parse(
+        '0x0000000000000000000000000000000000000000000015f5e0c9f13455b0eb17',
+      ),
+      Network.testnet4 => BigInt.parse(
+        '0x0000000000000000000000000000000000000000000001d6dce8651b6094e4c1',
+      ),
     };
   }
 
   ChainEntry _initBestHeader(Network network) {
-    final genesisBlock = Block.genesisBlock(network);
-    // check for block headers file
-    final headers = _blockHeadersRead();
-    if (headers.isNotEmpty) {
-      if (_compareHashes(headers.first.hash(), genesisBlock.header.hash())) {
-        ChainEntry? previous;
-        ChainEntry? chainHead;
-        for (final header in headers) {
-          chainHead = _makeChainEntry(header, previous);
-          previous = chainHead;
+    // check if the header file exists and is not empty
+    if (File(_blockHeadersFilePath).existsSync() &&
+        File(_blockHeadersFilePath).lengthSync() > 0) {
+      final headers = _blockHeadersFileRead();
+      if (headers.isNotEmpty) {
+        if (_compareHashes(headers.first.hash(), _genesisBlockHeader.hash())) {
+          ChainEntry? previous;
+          ChainEntry? chainHead;
+          for (final header in headers) {
+            chainHead = _makeChainEntry(header, previous);
+            previous = chainHead;
+          }
+          _fileChainHead = chainHead;
+          return chainHead!;
         }
-        return chainHead!;
+        _log.warning(
+          'Genesis block header hash mismatch: ${headers.first.hash().toHex()} != ${_genesisBlockHeader.hash().toHex()}',
+        );
       }
-      _log.warning(
-        'Genesis block header hash mismatch: ${headers.first.hash().toHex()} != ${genesisBlock.header.hash().toHex()}',
-      );
     }
-    // if no headers file or mismatch, use genesis block header
-    return _makeChainEntry(genesisBlock.header, null);
+    // if no headers file or mismatch, start with genesis block header
+    return _makeChainEntry(_genesisBlockHeader, null);
   }
 
   bool _compareHashes(Uint8List hash1, Uint8List hash2) {
@@ -93,66 +113,121 @@ class ChainManager {
     return true;
   }
 
-  List<BlockHeader> _blockHeadersRead() {
-    final headersFile = File(blockHeadersFilePath);
-    if (headersFile.existsSync()) {
-      _log.info('Block headers file found: $blockHeadersFilePath');
-      // read the headers CSV line by line
-      final headers = <BlockHeader>[];
-      headersFile.readAsLinesSync().forEach((line) {
-        // skip header line
-        if (line.startsWith('height,hash,header')) {
-          return;
-        }
-        final fields = line.split(',');
-        if (fields.length == 3) {
-          //final height = int.parse(fields[0]);
-          //final hash = Uint8List.fromList(fields[1].toBytes());
-          final header = BlockHeader.fromBytes(fields[2].toBytes());
-          headers.add(header);
-        }
-      });
-      _log.info('Loaded ${headers.length} block headers from file');
-      return headers;
+  List<BlockHeader> _blockHeadersFileRead() {
+    final headersFile = File(_blockHeadersFilePath);
+    if (!headersFile.existsSync()) {
+      throw StateError(
+        'Block headers file does not exist: $_blockHeadersFilePath',
+      );
     }
-    return [];
+    // read the headers CSV line by line
+    final headers = <BlockHeader>[];
+    headersFile.readAsLinesSync().forEach((line) {
+      // skip header line
+      if (line.startsWith('height,hash,header')) {
+        return;
+      }
+      final fields = line.split(',');
+      if (fields.length == 3) {
+        //final height = int.parse(fields[0]);
+        //final hash = Uint8List.fromList(fields[1].toBytes());
+        final header = BlockHeader.fromBytes(fields[2].toBytes());
+        headers.add(header);
+      }
+    });
+    _log.info('Loaded ${headers.length} block headers from file');
+    return headers;
   }
 
-  void _blockHeadersWriteOrAppend(List<ChainEntry> chainEntries) {
+  void _blockHeadersFileWrite() {
+    if (status != ChainStatus.active) {
+      throw StateError(
+        'Cannot write block headers to file in non-active chain status: $status',
+      );
+    }
+    final chainEntries = _chainEntryListFromHead(_bestChainHead, null);
+    if (chainEntries.isEmpty) {
+      throw StateError('Cannot write block headers without entries');
+    }
+    if (chainEntries.first.previous != null) {
+      throw StateError(
+        'First entry must be the genesis block when writing entire headers file',
+      );
+    }
     // convert block headers to CSV format
     final csvData = StringBuffer();
-    if (chainEntries.isNotEmpty && chainEntries.first.previous == null) {
-      csvData.writeln('height,hash,header');
-    }
+    csvData.writeln('height,hash,header');
     for (final entry in chainEntries) {
       csvData.writeln(
         '${entry.height.toString().padLeft(6, '0')},${reverseHash(entry.header.hash()).toHex()},${entry.header.toBytes().toHex()}',
       );
     }
-    // append or write to new file
-    final headersFile = File(blockHeadersFilePath);
+    // write to file
+    final headersFile = File(_blockHeadersFilePath);
     if (headersFile.existsSync()) {
-      // check the last height in the file
-      final lines = headersFile.readAsLinesSync();
-      if (lines.isEmpty) {
-        throw StateError('Headers file is empty, cannot append new entries');
-      }
-      final lastHeight = int.tryParse(lines.last.split(',')[0]);
-      if (lastHeight == null) {
-        throw StateError('Invalid last height in headers file');
-      }
-      if (lastHeight != chainEntries.first.previous?.height) {
-        throw StateError(
-          'Last height in file ($lastHeight) does not match first height in new entries (${chainEntries.first.height})',
-        );
-      }
-      // write new entries to the file
-      headersFile.writeAsStringSync(csvData.toString(), mode: FileMode.append);
-    } else {
-      headersFile.createSync(recursive: true);
-      headersFile.writeAsStringSync(csvData.toString());
+      throw StateError(
+        'Block headers file already exists: $_blockHeadersFilePath.',
+      );
     }
-    _log.info('Block headers written to file: $blockHeadersFilePath');
+    headersFile.createSync(recursive: true);
+    headersFile.writeAsStringSync(csvData.toString());
+    _log.info('Block headers written to file: $_blockHeadersFilePath');
+    // update the file chain head
+    _fileChainHead = _bestChainHead;
+  }
+
+  void _blockHeadersFileAppend() {
+    if (status != ChainStatus.active) {
+      throw StateError(
+        'Cannot write block headers to file in non-active chain status: $status',
+      );
+    }
+    final chainEntries = _chainEntryListFromHead(
+      _bestChainHead,
+      _fileChainHead,
+    );
+    if (chainEntries.isEmpty) {
+      _log.info('No new block headers to append to file');
+      return;
+    }
+    if (chainEntries.first.previous == null) {
+      throw StateError(
+        'First entry should not be the genesis block when appending to headers file',
+      );
+    }
+    // convert block headers to CSV format
+    final csvData = StringBuffer();
+    for (final entry in chainEntries) {
+      csvData.writeln(
+        '${entry.height.toString().padLeft(6, '0')},${reverseHash(entry.header.hash()).toHex()},${entry.header.toBytes().toHex()}',
+      );
+    }
+    // append to file
+    final headersFile = File(_blockHeadersFilePath);
+    if (!headersFile.existsSync()) {
+      throw StateError(
+        'Block headers file does not exist: $_blockHeadersFilePath',
+      );
+    }
+    // check the last height in the file
+    final lines = headersFile.readAsLinesSync();
+    if (lines.isEmpty) {
+      throw StateError('Headers file is empty, cannot append new entries');
+    }
+    final lastHeight = int.tryParse(lines.last.split(',')[0]);
+    if (lastHeight == null) {
+      throw StateError('Invalid last height in headers file');
+    }
+    if (lastHeight != chainEntries.first.previous?.height) {
+      throw StateError(
+        'Last height in file ($lastHeight) does not match first height in new entries (${chainEntries.first.height})',
+      );
+    }
+    // write new entries to the file
+    headersFile.writeAsStringSync(csvData.toString(), mode: FileMode.append);
+    _log.info('Block headers appended to file: $_blockHeadersFilePath');
+    // update the file chain head
+    _fileChainHead = _bestChainHead;
   }
 
   List<BlockHeader> _blockHeadersTake(ChainEntry ce, int count) {
@@ -184,9 +259,9 @@ class ChainManager {
 
   List<Uint8List> get recentBlockHeadersHashes {
     return _blockHeadersTake(
-      bestChainHead,
-      bestChainHead.height + 1 < maxReorgDepth
-          ? bestChainHead.height + 1
+      _bestChainHead,
+      _bestChainHead.height + 1 < maxReorgDepth
+          ? _bestChainHead.height + 1
           : maxReorgDepth,
     ).map((header) => header.hash()).toList();
   }
@@ -208,13 +283,13 @@ class ChainManager {
     );
     // check if the header builds on the best chainhead (should be most common case)
     if (_compareHashes(
-      bestChainHead.header.hash(),
+      _bestChainHead.header.hash(),
       header.previousBlockHeaderHash,
     )) {
-      return _makeChainEntry(header, bestChainHead);
+      return _makeChainEntry(header, _bestChainHead);
     }
     // check if the header builds on one of the chainheads
-    for (final chainHead in chainHeads) {
+    for (final chainHead in _chainHeads) {
       if (_compareHashes(
         chainHead.header.hash(),
         header.previousBlockHeaderHash,
@@ -223,8 +298,8 @@ class ChainManager {
       }
     }
     // check if the header is a reorg of one of the heads (up to maxReorgDepth)
-    for (final chainHead in chainHeads) {
-      if (chainHead.height < bestChainHead.height - maxReorgDepth) continue;
+    for (final chainHead in _chainHeads) {
+      if (chainHead.height < _bestChainHead.height - maxReorgDepth) continue;
       final initialHeight = chainHead.height;
       ChainEntry? current = chainHead;
       while (current != null &&
@@ -309,12 +384,12 @@ class ChainManager {
       'Recalculating difficulty: Old Bits: ${currentBits.toRadixString(16)}, New Bits: ${newBits.toRadixString(16)}',
     );
     // check newBits is not greater than the genesis block's nBits
-    final genesisTarget = BlockHeader.bitsToTarget(genesisBlockHeader.nBits);
+    final genesisTarget = BlockHeader.bitsToTarget(_genesisBlockHeader.nBits);
     if (newTarget > genesisTarget) {
       _log.warning(
         'New target is greater than genesis target: $newTarget > $genesisTarget',
       );
-      return genesisBlockHeader.nBits;
+      return _genesisBlockHeader.nBits;
     }
     return newBits;
   }
@@ -336,16 +411,16 @@ class ChainManager {
         _log.info(
           'Resetting work required on testnet due to long time since last block: $blockInterval seconds',
         );
-        return genesisBlockHeader.nBits; // reset to the first block's nBits
+        return _genesisBlockHeader.nBits; // reset to the first block's nBits
       } else if (newChainHead.previous!.height > 2) {
         // use the last non special minimum difficulty block
         ChainEntry? current = newChainHead.previous;
         while (current != null &&
             (current.height + 1) % difficultyAdjustmentInterval != 0 &&
-            current.header.nBits == genesisBlockHeader.nBits) {
+            current.header.nBits == _genesisBlockHeader.nBits) {
           current = current.previous;
         }
-        return current?.header.nBits ?? genesisBlockHeader.nBits;
+        return current?.header.nBits ?? _genesisBlockHeader.nBits;
       }
     }
     // otherwise, use the last block's nBits
@@ -355,15 +430,15 @@ class ChainManager {
   void _updateHeads(ChainEntry newChainHead) {
     // 1) check if the new chainhead can replace one of the existing heads
     var replacedHead = false;
-    for (final chainHead in chainHeads) {
+    for (final chainHead in _chainHeads) {
       if (_compareHashes(
         chainHead.header.hash(),
         newChainHead.header.previousBlockHeaderHash,
       )) {
         // remove the old chainhead
-        chainHeads.remove(chainHead);
+        _chainHeads.remove(chainHead);
         // add the new chainhead
-        chainHeads.add(newChainHead);
+        _chainHeads.add(newChainHead);
         // set 'replacedHead' and break
         replacedHead = true;
         break;
@@ -371,11 +446,11 @@ class ChainManager {
     }
     // 2) if the new chainhead does not replace any existing chainhead it must be a reorg so add it as a new chainhead
     if (!replacedHead) {
-      chainHeads.add(newChainHead);
+      _chainHeads.add(newChainHead);
     }
     // 3) find the new best chainhead based on chain work (and time created)
     List<ChainEntry> candidates = [];
-    for (final chainHead in chainHeads) {
+    for (final chainHead in _chainHeads) {
       if (candidates.isEmpty ||
           chainHead.chainWork > candidates.first.chainWork) {
         candidates.clear();
@@ -385,24 +460,46 @@ class ChainManager {
       }
     }
     if (candidates.length == 1) {
-      bestChainHead = candidates.first;
+      _bestChainHead = candidates.first;
     } else {
       // if there are multiple candidates, choose the one with earliest timeCreated
       candidates.sort((a, b) => a.timeCreated.compareTo(b.timeCreated));
-      bestChainHead = candidates.first;
+      _bestChainHead = candidates.first;
     }
+  }
+
+  List<ChainEntry> _chainEntryListFromHead(
+    ChainEntry chainHead,
+    ChainEntry? initialChainHead,
+  ) {
+    final chainEntries = <ChainEntry>[];
+    ChainEntry? current = chainHead;
+    // collect all chain entries from a chainhead up to initialChainHead (if provided)
+    while (current != null &&
+        (initialChainHead == null ||
+            !_compareHashes(
+              current.header.hash(),
+              initialChainHead.header.hash(),
+            ))) {
+      chainEntries.add(current);
+      current = current.previous;
+    }
+
+    //TODO: if we reorged past the chainHead->initialChainHead threshold this will return 0 entries
+    // we *should* fail in this case and have to rewrite the entire headers file
+
+    return chainEntries.reversed.toList();
   }
 
   void _cleanHeads() {
     // remove chainheads that are too far behind the best chainhead
-    chainHeads.removeWhere(
-      (chainHead) => chainHead.height < bestChainHead.height - maxReorgDepth,
+    _chainHeads.removeWhere(
+      (chainHead) => chainHead.height < _bestChainHead.height - maxReorgDepth,
     );
   }
 
   bool addHeaders(List<BlockHeader> headers) {
-    final initialBest = bestChainHead;
-    final initialBestIsGenesis = bestChainHead.height == 0;
+    final initialBest = _bestChainHead;
     for (final header in headers) {
       // create new chainhead from block header
       final newChainHead = _findNewChainHead(header);
@@ -462,29 +559,42 @@ class ChainManager {
       _updateHeads(newChainHead);
     }
     _log.info(
-      'Added ${headers.length} headers, new height: ${bestChainHead.height}, chain work: ${bestChainHead.chainWork.toRadixString(16)}',
+      'Added ${headers.length} headers, new height: ${_bestChainHead.height}, chain work: ${_bestChainHead.chainWork.toRadixString(16)}',
     );
-    // write the headers to file
-    if (!_compareHashes(
-      bestChainHead.header.hash(),
-      initialBest.header.hash(),
-    )) {
-      final chainEntries = <ChainEntry>[];
-      ChainEntry? current = bestChainHead;
-      // collect all new chain entries (include initial best if it is the genesis block)
-      while (current != null &&
-          (initialBestIsGenesis ||
-              !_compareHashes(
-                current.header.hash(),
-                initialBest.header.hash(),
-              ))) {
-        chainEntries.add(current);
-        current = current.previous;
+    // if the chain is active, write the headers to file
+    if (status == ChainStatus.active) {
+      // write the headers to file
+      if (!_compareHashes(
+        _bestChainHead.header.hash(),
+        initialBest.header.hash(),
+      )) {
+        _blockHeadersFileAppend();
       }
-      _blockHeadersWriteOrAppend(chainEntries.reversed.toList());
     }
     // clean chainheads
     _cleanHeads();
     return true;
+  }
+
+  bool hasMinimumChainWork() {
+    return _bestChainHead.chainWork >= _minumumChainWork(network);
+  }
+
+  void activate() {
+    if (status != ChainStatus.headerSync) {
+      throw StateError('Cannot activate chain in status: $status');
+    }
+    _log.info(
+      'Activating chain with best header: ${_bestChainHead.header.hash().toHex()}',
+    );
+    // set the status to active
+    // this allows writing block headers to file
+    _status = ChainStatus.active;
+    // write the best chain head to file
+    if (_fileChainHead == null) {
+      _blockHeadersFileWrite();
+    } else {
+      _blockHeadersFileAppend();
+    }
   }
 }

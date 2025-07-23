@@ -399,8 +399,8 @@ class TestP2pCommand extends Command<void> {
     final peerRaw = argResults?.option('peer');
     if (peerRaw == null) {
       _log.info('Using dns seed to find peer.');
-      ip = await Node.ipFromDnsSeed(network);
-      port = Node.defaultPort(network);
+      ip = await Peer.ipFromDnsSeed(network);
+      port = Peer.defaultPort(network);
     } else {
       final parts = peerRaw.split(':');
       if (parts.length != 2) {
@@ -415,7 +415,7 @@ class TestP2pCommand extends Command<void> {
       }
     }
     final node = Node(network: network);
-    node.connectPeer(Peer(ip: ip, port: port));
+    node.connect(ip: ip, port: port);
   }
 }
 
