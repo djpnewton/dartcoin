@@ -38,6 +38,8 @@ enum ChainStatus {
   active, // activated chain, read/write operations allowed
 }
 
+enum AddHeadersResult { success, invalidHeader, noChainHead }
+
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
   static const int maxTimewarp = 600;
@@ -176,16 +178,12 @@ class ChainManager {
     _fileChainHead = _bestChainHead;
   }
 
-  void _blockHeadersFileAppend() {
+  void _blockHeadersFileAppend(List<ChainEntry> chainEntries) {
     if (status != ChainStatus.active) {
       throw StateError(
         'Cannot write block headers to file in non-active chain status: $status',
       );
     }
-    final chainEntries = _chainEntryListFromHead(
-      _bestChainHead,
-      _fileChainHead,
-    );
     if (chainEntries.isEmpty) {
       _log.info('No new block headers to append to file');
       return;
@@ -228,6 +226,43 @@ class ChainManager {
     _log.info('Block headers appended to file: $_blockHeadersFilePath');
     // update the file chain head
     _fileChainHead = _bestChainHead;
+  }
+
+  void _blockHeadersFileDelete() {
+    final headersFile = File(_blockHeadersFilePath);
+    if (headersFile.existsSync()) {
+      headersFile.deleteSync();
+      _log.info('Block headers file deleted: $_blockHeadersFilePath');
+    } else {
+      _log.warning('Block headers file does not exist: $_blockHeadersFilePath');
+    }
+    // reset the file chain head
+    _fileChainHead = null;
+  }
+
+  void _blockHeadersFileWriteOrAppend() {
+    // if no block headers have been read from the file yet,
+    // write the entire headers file
+    if (_fileChainHead == null) {
+      _blockHeadersFileWrite();
+    } else {
+      // find the list of chain entries from the best chain head to the file chain head
+      // this *should* not be empty because we are called after adding new headers
+      final chainEntries = _chainEntryListFromHead(
+        _bestChainHead,
+        _fileChainHead,
+      );
+      // if the list is empty or contains the genesis block,
+      // it means we have reorged past the file chain head
+      // so we need to rewrite the entire headers file (should happen very infrequently)
+      //TODO: need a way to test this case
+      if (chainEntries.isEmpty || chainEntries.first.height == 0) {
+        _blockHeadersFileDelete();
+        _blockHeadersFileWrite();
+      } else {
+        _blockHeadersFileAppend(chainEntries);
+      }
+    }
   }
 
   List<BlockHeader> _blockHeadersTake(ChainEntry ce, int count) {
@@ -484,10 +519,6 @@ class ChainManager {
       chainEntries.add(current);
       current = current.previous;
     }
-
-    //TODO: if we reorged past the chainHead->initialChainHead threshold this will return 0 entries
-    // we *should* fail in this case and have to rewrite the entire headers file
-
     return chainEntries.reversed.toList();
   }
 
@@ -498,7 +529,7 @@ class ChainManager {
     );
   }
 
-  bool addHeaders(List<BlockHeader> headers) {
+  AddHeadersResult addHeaders(List<BlockHeader> headers) {
     final initialBest = _bestChainHead;
     for (final header in headers) {
       // create new chainhead from block header
@@ -507,7 +538,7 @@ class ChainManager {
         _log.warning(
           'Received header does not build on (or reorg) any known chainhead',
         );
-        return false; // abort adding headers
+        return AddHeadersResult.noChainHead; // abort adding headers
       }
       final headerHash = newChainHead.header.hash();
       final headerHashReversed = reverseHash(headerHash);
@@ -522,7 +553,7 @@ class ChainManager {
       );
       // check the median time past
       if (!_checkMedianTimePast(newChainHead)) {
-        return false; // abort adding headers
+        return AddHeadersResult.invalidHeader; // abort adding headers
       }
       // check testnet4 timewarp rule (bip 94)
       if (network == Network.testnet4) {
@@ -533,7 +564,7 @@ class ChainManager {
             _log.warning(
               'Received header with invalid time: ${newChainHead.header.time}, expected greater then or equal to ${newChainHead.previous!.header.time - maxTimewarp}',
             );
-            return false; // abort adding headers
+            return AddHeadersResult.invalidHeader; // abort adding headers
           }
         }
       }
@@ -545,7 +576,7 @@ class ChainManager {
         _log.warning(
           'Received header with different nBits: ${newChainHead.header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
         );
-        return false; // abort adding headers
+        return AddHeadersResult.invalidHeader; // abort adding headers
       }
       final target = BlockHeader.bitsToTarget(bits);
       final headerWork = bytesToBigInt(headerHashReversed);
@@ -553,7 +584,7 @@ class ChainManager {
         _log.warning(
           'Received header with insufficient work: ${headerHashReversed.toHex().padLeft(64, '0')} (needed: ${target.toRadixString(16).padLeft(64, '0')})',
         );
-        return false; // abort adding headers
+        return AddHeadersResult.invalidHeader; // abort adding headers
       }
       // update heads
       _updateHeads(newChainHead);
@@ -568,12 +599,12 @@ class ChainManager {
         _bestChainHead.header.hash(),
         initialBest.header.hash(),
       )) {
-        _blockHeadersFileAppend();
+        _blockHeadersFileWriteOrAppend();
       }
     }
     // clean chainheads
     _cleanHeads();
-    return true;
+    return AddHeadersResult.success;
   }
 
   bool hasMinimumChainWork() {
@@ -585,16 +616,12 @@ class ChainManager {
       throw StateError('Cannot activate chain in status: $status');
     }
     _log.info(
-      'Activating chain with best header: ${_bestChainHead.header.hash().toHex()}',
+      'Activating chain with best header: ${reverseHash(_bestChainHead.header.hash()).toHex()}',
     );
     // set the status to active
     // this allows writing block headers to file
     _status = ChainStatus.active;
     // write the best chain head to file
-    if (_fileChainHead == null) {
-      _blockHeadersFileWrite();
-    } else {
-      _blockHeadersFileAppend();
-    }
+    _blockHeadersFileWriteOrAppend();
   }
 }

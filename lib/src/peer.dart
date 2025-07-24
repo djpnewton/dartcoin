@@ -20,12 +20,13 @@ enum PeerStatus {
   disconnected,
 }
 
-enum PeerStatusChangeReason { invalidHeaders, socketClosed }
+enum PeerStatusChangeReason { invalidHeader, noChainHead, socketClosed }
 
 typedef PeerStatusEvent =
     void Function(
       Peer peer,
-      PeerStatus status, {
+      PeerStatus status,
+      PeerStatus previousStatus, {
       PeerStatusChangeReason? reason,
     });
 
@@ -141,7 +142,8 @@ class Peer {
       _socket = await Socket.connect(ip, port);
       final socket = _socket!;
       _status = PeerStatus.connected;
-      _onStatusChange(this, _status);
+      final prev = _status;
+      _onStatusChange(this, _status, prev);
       _log.info('Connected to peer: $ip:$port');
       // send version message
       final versionBytes = MessageVersion(
@@ -203,10 +205,12 @@ class Peer {
           _log.info('Disconnected from peer: $ip:$port');
           socket.destroy();
           _socket = null;
+          final prev = _status;
           _status = PeerStatus.disconnected;
           _onStatusChange(
             this,
             _status,
+            prev,
             reason: PeerStatusChangeReason.socketClosed,
           );
         },
@@ -303,8 +307,9 @@ class Peer {
       _log.info('>>>>>: $ip:$port, Verack');
       socket.add(MessageVerack().toBytes(network));
       // set status to handshake complete
+      final prev = _status;
       _status = PeerStatus.handshakeComplete;
-      _onStatusChange(this, _status);
+      _onStatusChange(this, _status, prev);
     } else if (message is MessagePing) {
       _log.info('>>>>>: $ip:$port, Pong');
       socket.add(MessagePong(nonce: message.nonce).toBytes(network));
@@ -320,7 +325,24 @@ class Peer {
           _log.warning('ChainManager is not initialized, cannot process block');
           return;
         }
-        _chainManager!.addHeaders([message.block.header]);
+        switch (_chainManager!.addHeaders([message.block.header])) {
+          case AddHeadersResult.success:
+            break; // block added successfully
+          case AddHeadersResult.invalidHeader:
+            // TODO: disconnect peer?
+            break; // invalid header,
+          case AddHeadersResult.noChainHead:
+            // if the block is not part of any of our known chains, we need to request more headers
+            final prev = _status;
+            _status = PeerStatus.handshakeComplete;
+            _onStatusChange(
+              this,
+              _status,
+              prev,
+              reason: PeerStatusChangeReason.noChainHead,
+            );
+            break;
+        }
       }
     } else if (message is MessageHeaders) {
       if (_status != PeerStatus.headersSyncing) {
@@ -333,19 +355,38 @@ class Peer {
       }
       final chainManager = _chainManager!;
       // add the headers to the blockHeaders list
-      if (!chainManager.addHeaders(message.headers)) {
-        _log.warning('Failed to add headers: ${message.headers.length}');
-        _status = PeerStatus.handshakeComplete;
-        _onStatusChange(
-          this,
-          _status,
-          reason: PeerStatusChangeReason.invalidHeaders,
-        );
-        return;
+      switch (chainManager.addHeaders(message.headers)) {
+        case AddHeadersResult.success:
+          break; // headers added successfully
+        case AddHeadersResult.invalidHeader:
+          _log.warning(
+            'Failed to add invalid headers: ${message.headers.length}',
+          );
+          final prev = _status;
+          _status = PeerStatus.handshakeComplete;
+          _onStatusChange(
+            this,
+            _status,
+            prev,
+            reason: PeerStatusChangeReason.invalidHeader,
+          );
+          return;
+        case AddHeadersResult.noChainHead:
+          _log.warning('Failed to add headers, no chain head found');
+          final prev = _status;
+          _status = PeerStatus.handshakeComplete;
+          _onStatusChange(
+            this,
+            _status,
+            prev,
+            reason: PeerStatusChangeReason.noChainHead,
+          );
+          return;
       }
       if (message.headers.length < maxBlockHeaders) {
+        final prev = _status;
         _status = PeerStatus.headersSynced;
-        _onStatusChange(this, _status);
+        _onStatusChange(this, _status, prev);
       } else {
         // request next batch of block headers
         _log.info(
@@ -368,8 +409,9 @@ class Peer {
     _log.info('Disconnecting from peer: $ip:$port');
     _socket?.destroy();
     _socket = null;
+    final prev = _status;
     _status = PeerStatus.disconnected;
-    _onStatusChange(this, _status);
+    _onStatusChange(this, _status, prev);
   }
 
   void sync(ChainManager chainManager) {
@@ -386,8 +428,9 @@ class Peer {
     final socket = _socket!;
     _chainManager = chainManager;
     //  start requesting block headers
+    final prev = _status;
     _status = PeerStatus.headersSyncing;
-    _onStatusChange(this, _status);
+    _onStatusChange(this, _status, prev);
     _log.info(
       '>>>>>: $ip:$port, GetHeaders: ${reverseHash(chainManager.bestChainHead.header.hash()).toHex()}',
     );

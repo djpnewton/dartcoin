@@ -43,7 +43,8 @@ class Node {
 
   void _peerStatusChange(
     Peer peer,
-    PeerStatus status, {
+    PeerStatus status,
+    PeerStatus prevStatus, {
     PeerStatusChangeReason? reason,
   }) {
     _log.info(
@@ -53,9 +54,18 @@ class Node {
       case PeerStatus.connected:
         break;
       case PeerStatus.handshakeComplete:
-        if (reason == PeerStatusChangeReason.invalidHeaders) {
+        if (reason == PeerStatusChangeReason.invalidHeader) {
           _log.warning(
             'Invalid headers received from peer ${peer.ip}:${peer.port}',
+          );
+          peer.disconnect();
+          _peers.remove(peer);
+          // TODO: connect to another peer
+          return;
+        } else if (prevStatus == PeerStatus.headersSyncing &&
+            reason == PeerStatusChangeReason.noChainHead) {
+          _log.info(
+            'Peer ${peer.ip}:${peer.port} headers syncing, but no chain head found',
           );
           peer.disconnect();
           _peers.remove(peer);
