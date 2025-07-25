@@ -419,6 +419,60 @@ class TestP2pCommand extends Command<void> {
   }
 }
 
+class RegtestExampleCommand extends Command<void> {
+  @override
+  final name = 'regtest-example';
+  @override
+  final description = 'An example command for regtest network.';
+
+  RegtestExampleCommand();
+
+  @override
+  void run() async {
+    _log.info('Starting bitcoin core in regtest mode...');
+    final proc1 = CoreProcess(verbose: true, p2pPort: 18444, rpcPort: 18443);
+    await proc1.start();
+    final proc2 = CoreProcess(verbose: true, p2pPort: 18544, rpcPort: 18543);
+    await proc2.start();
+
+    // Listen for SIGINT (Ctrl+C)
+    ProcessSignal.sigint.watch().listen((signal) async {
+      _log.info('Ctrl+C detected. Cleaning up...');
+      await proc1.stop();
+      await proc2.stop();
+      exit(0); // Exit the program gracefully
+    });
+
+    await proc1.waitTillInitialized();
+    await proc2.waitTillInitialized();
+
+    try {
+      await proc2.rpc.addNode('${proc1.p2pHost}:${proc1.p2pPort}', 'add');
+      _log.info('proc2: "addnode ${proc1.p2pHost}:${proc1.p2pPort} add" command executed.');
+      final info = await proc1.rpc.getBlockchainInfo();
+      _log.info('proc1: Blockchain info: $info');
+      final blockCount = await proc1.rpc.getBlockCount();
+      _log.info('proc1: Block count: $blockCount');
+      final gen = await proc1.rpc.generateToAddress(
+        2,
+        'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN',
+      );
+      _log.info('proc1: Generate to address: $gen');
+      final peerInfo = await proc2.rpc.getPeerInfo();
+      _log.info('proc2: Peer info: $peerInfo');
+      final info2 = await proc2.rpc.getBlockchainInfo();
+      _log.info('proc2: Blockchain info: $info2');
+    } catch (e) {
+      _log.severe('Error connecting to regtest node: $e');
+    }
+    sleep(const Duration(seconds: 50)); // wait for a bit to see the logs
+    await proc1.stop();
+    await proc2.stop();
+    _log.info('Regtest example command completed.');
+    exit(0); // not sure why this is needed :(
+  }
+}
+
 void main(List<String> args) {
   initLogger();
 
@@ -431,7 +485,8 @@ void main(List<String> args) {
         ..addCommand(SignCommand())
         ..addCommand(VerifyCommand())
         ..addCommand(PrivateKeyCommand())
-        ..addCommand(TestP2pCommand());
+        ..addCommand(TestP2pCommand())
+        ..addCommand(RegtestExampleCommand());
   runner
       .run(args)
       .catchError((dynamic e) {

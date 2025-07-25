@@ -23,3 +23,7 @@ export 'src/sha512.dart';
 export 'src/node.dart';
 export 'src/p2p_messages.dart';
 export 'src/peer.dart';
+
+// bitcoin core
+export 'src/bitcoin_core/core_process.dart';
+export 'src/bitcoin_core/core_rpc.dart';

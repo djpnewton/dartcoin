@@ -1,0 +1,119 @@
+import 'dart:convert';
+
+import 'package:logging/logging.dart';
+import 'package:http/http.dart' as http;
+
+final _log = Logger('CoreJsonRpc');
+
+class CoreJsonRpc {
+  static const String defaultHost = '127.0.0.1';
+  static const int defaultPort = 18443; // regtest default port
+  static const String defaultUser = 'user';
+  static const String defaultPassword = 'password';
+
+  final String host;
+  final int port;
+  final String username;
+  final String password;
+  final bool verbose;
+  final http.Client _client;
+
+  int _requestId = 0;
+
+  CoreJsonRpc({
+    this.host = defaultHost,
+    this.port = defaultPort,
+    this.username = defaultUser,
+    this.password = defaultPassword,
+    this.verbose = false,
+  }) : _client = http.Client() {
+    if (verbose) {
+      _log.info('http client connected to: $host:$port');
+    }
+  }
+
+  String get _baseUrl => 'http://$host:$port';
+
+  String get _authHeader {
+    final credentials = base64Encode(utf8.encode('$username:$password'));
+    return 'Basic $credentials';
+  }
+
+  void close() {
+    _client.close();
+  }
+
+  Future<Map<String, dynamic>> call(
+    String method, [
+    List<dynamic>? params,
+  ]) async {
+    final requestId = ++_requestId;
+    final request = {
+      'jsonrpc': '2.0',
+      'id': requestId,
+      'method': method,
+      if (params != null) 'params': params,
+    };
+
+    final response = await _client.post(
+      Uri.parse(_baseUrl),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': _authHeader,
+      },
+      body: jsonEncode(request),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('HTTP ${response.statusCode}: ${response.body}');
+    }
+
+    final responseData = jsonDecode(response.body) as Map<String, dynamic>;
+
+    if (responseData['error'] != null) {
+      final error = responseData['error'] as Map<String, dynamic>;
+      throw Exception('RPC Error ${error['code']}: ${error['message']}');
+    }
+
+    if (verbose) {
+      _log.info('RPC call: $method -> ${responseData['result']}');
+    }
+    return responseData;
+  }
+
+  // Convenience methods for common Bitcoin Core RPC calls
+  Future<Map<String, dynamic>> getBlockchainInfo() async {
+    final response = await call('getblockchaininfo');
+    return response['result'] as Map<String, dynamic>;
+  }
+
+  Future<String> getNewAddress([String? label]) async {
+    final params = label != null ? [label] : null;
+    final response = await call('getnewaddress', params);
+    return response['result'] as String;
+  }
+
+  Future<Map<String, dynamic>> getWalletInfo() async {
+    final response = await call('getwalletinfo');
+    return response['result'] as Map<String, dynamic>;
+  }
+
+  Future<int> getBlockCount() async {
+    final response = await call('getblockcount');
+    return response['result'] as int;
+  }
+
+  Future<List<dynamic>> generateToAddress(int nblocks, String address) async {
+    final response = await call('generatetoaddress', [nblocks, address]);
+    return response['result'] as List<dynamic>;
+  }
+
+  Future<void> addNode(String node, String command) async {
+    await call('addnode', [node, command]);
+  }
+
+  Future<List<dynamic>> getPeerInfo() async {
+    final response = await call('getpeerinfo');
+    return response['result'] as List<dynamic>;
+  }
+}
