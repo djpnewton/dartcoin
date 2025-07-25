@@ -82,6 +82,12 @@ class CoreJsonRpc {
   }
 
   // Convenience methods for common Bitcoin Core RPC calls
+
+  Future<String> getBestBlockHash() async {
+    final response = await call('getbestblockhash');
+    return response['result'] as String;
+  }
+
   Future<Map<String, dynamic>> getBlockchainInfo() async {
     final response = await call('getblockchaininfo');
     return response['result'] as Map<String, dynamic>;
@@ -103,6 +109,21 @@ class CoreJsonRpc {
     return response['result'] as int;
   }
 
+  Future<bool> waitForBlockCount(
+    int targetCount, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final startTime = DateTime.now();
+    while (DateTime.now().difference(startTime) < timeout) {
+      final count = await getBlockCount();
+      if (count >= targetCount) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    return false;
+  }
+
   Future<List<dynamic>> generateToAddress(int nblocks, String address) async {
     final response = await call('generatetoaddress', [nblocks, address]);
     return response['result'] as List<dynamic>;
@@ -115,5 +136,13 @@ class CoreJsonRpc {
   Future<List<dynamic>> getPeerInfo() async {
     final response = await call('getpeerinfo');
     return response['result'] as List<dynamic>;
+  }
+
+  Future<void> invalidateBlock(String blockHash) async {
+    await call('invalidateblock', [blockHash]);
+  }
+
+  Future<void> reconsiderBlock(String blockHash) async {
+    await call('reconsiderblock', [blockHash]);
   }
 }

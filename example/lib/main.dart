@@ -429,10 +429,12 @@ class RegtestExampleCommand extends Command<void> {
 
   @override
   void run() async {
+    final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
+    final dummyAddr2 = 'mjcNxNEUrMs29U3wSdd7UZ54KGweZAehn6';
     _log.info('Starting bitcoin core in regtest mode...');
-    final proc1 = CoreProcess(verbose: true, p2pPort: 18444, rpcPort: 18443);
+    final proc1 = CoreProcess(verbose: false, p2pPort: 18444, rpcPort: 18443);
     await proc1.start();
-    final proc2 = CoreProcess(verbose: true, p2pPort: 18544, rpcPort: 18543);
+    final proc2 = CoreProcess(verbose: false, p2pPort: 18544, rpcPort: 18543);
     await proc2.start();
 
     // Listen for SIGINT (Ctrl+C)
@@ -448,20 +450,34 @@ class RegtestExampleCommand extends Command<void> {
 
     try {
       await proc2.rpc.addNode('${proc1.p2pHost}:${proc1.p2pPort}', 'add');
-      _log.info('proc2: "addnode ${proc1.p2pHost}:${proc1.p2pPort} add" command executed.');
-      final info = await proc1.rpc.getBlockchainInfo();
-      _log.info('proc1: Blockchain info: $info');
-      final blockCount = await proc1.rpc.getBlockCount();
-      _log.info('proc1: Block count: $blockCount');
-      final gen = await proc1.rpc.generateToAddress(
-        2,
-        'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN',
+      _log.info(
+        'proc2: "addnode ${proc1.p2pHost}:${proc1.p2pPort} add" command executed.',
       );
-      _log.info('proc1: Generate to address: $gen');
-      final peerInfo = await proc2.rpc.getPeerInfo();
-      _log.info('proc2: Peer info: $peerInfo');
-      final info2 = await proc2.rpc.getBlockchainInfo();
-      _log.info('proc2: Blockchain info: $info2');
+      await proc1.rpc.generateToAddress(50, dummyAddr1);
+      final hash50 = await proc1.rpc.getBestBlockHash();
+      _log.info('proc1: Best block hash after 50 blocks: $hash50');
+      await proc1.rpc.generateToAddress(50, dummyAddr1);
+      _log.info('Waiting for block count to reach 100 on proc2...');
+      await proc2.rpc.waitForBlockCount(100);
+      _log.info('proc2: invalidating block $hash50');
+      await proc2.rpc.invalidateBlock(hash50);
+      final hash49 = await proc2.rpc.getBestBlockHash();
+      _log.info('proc2: Best block hash after invalidation: $hash49');
+      await proc2.rpc.generateToAddress(100, dummyAddr2);
+      _log.info('proc2: Generated 100 blocks after invalidation.');
+      final hash149 = await proc2.rpc.getBestBlockHash();
+      _log.info('proc2: Best block hash after generating 100 blocks: $hash149');
+      _log.info('Waiting for proc1 to reach block count 149...');
+      await proc1.rpc.waitForBlockCount(149);
+      final bestProc1 = await proc1.rpc.getBestBlockHash();
+      _log.info('proc1: Best block hash after generating 100 blocks: $bestProc1');
+      if (hash149 == bestProc1) {
+        _log.info('Both processes have the same best block hash after chain reorg.');
+      } else {
+        _log.warning(
+          'Best block hashes differ between processes: proc1: $bestProc1, proc2: $hash149',
+        );
+      }
     } catch (e) {
       _log.severe('Error connecting to regtest node: $e');
     }
