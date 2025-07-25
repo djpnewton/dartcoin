@@ -465,7 +465,7 @@ class RegtestExampleCommand extends Command<void> {
     } catch (e) {
       _log.severe('Error connecting to regtest node: $e');
     }
-    sleep(const Duration(seconds: 50)); // wait for a bit to see the logs
+    //sleep(const Duration(seconds: 50)); // wait for a bit to see the logs
     await proc1.stop();
     await proc2.stop();
     _log.info('Regtest example command completed.');

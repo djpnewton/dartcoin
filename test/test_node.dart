@@ -4,7 +4,6 @@ import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import '../lib/src/bitcoin_core/core_process.dart';
-import '../lib/src/bitcoin_core/core_rpc.dart';
 //import '../lib/src/node.dart';
 
 void initLogger() {

@@ -66,6 +66,10 @@ class CoreProcess {
     _log.info('RPC host: $rpcHost, port: $_rpcPort');
     // initialize the executable path
     if (executablePath == null || executablePath.isEmpty) {
+      // check the BITCOIN_CORE_BIN environment variable
+      executablePath = Platform.environment['BITCOIN_CORE_BIN'];
+    }
+    if (executablePath == null || executablePath.isEmpty) {
       // find the OS-specific executable path
       final pathCandidates = <String>[];
       if (Platform.isWindows) {
