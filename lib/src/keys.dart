@@ -338,6 +338,11 @@ class PublicKey {
         ScriptType.p2shP2wpkh => _prefixDict['upub']!,
         ScriptType.p2wpkh => _prefixDict['vpub']!,
       },
+      Network.regtest => switch (scriptType) {
+        ScriptType.p2pkh => _prefixDict['tpub']!,
+        ScriptType.p2shP2wpkh => _prefixDict['upub']!,
+        ScriptType.p2wpkh => _prefixDict['vpub']!,
+      },
     };
     final depthHex = depth.toRadixString(16).padLeft(2, '0');
     final parentFingerprintHex = parentFingerprint
@@ -638,6 +643,11 @@ class PrivateKey extends PublicKey {
         ScriptType.p2wpkh => _prefixDict['vprv']!,
       },
       Network.testnet4 => switch (scriptType) {
+        ScriptType.p2pkh => _prefixDict['tprv']!,
+        ScriptType.p2shP2wpkh => _prefixDict['uprv']!,
+        ScriptType.p2wpkh => _prefixDict['vprv']!,
+      },
+      Network.regtest => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tprv']!,
         ScriptType.p2shP2wpkh => _prefixDict['uprv']!,
         ScriptType.p2wpkh => _prefixDict['vprv']!,

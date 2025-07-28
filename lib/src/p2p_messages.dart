@@ -40,6 +40,7 @@ class MessageHeader {
   static const magicMainnet = [0xf9, 0xbe, 0xb4, 0xd9];
   static const magicTestnet = [0x0b, 0x11, 0x09, 0x07];
   static const magicTestnet4 = [0x1c, 0x16, 0x3f, 0x28];
+  static const magicRegtest = [0xfa, 0xbf, 0xb5, 0xda];
   static const messageHeaderSize = 24;
   String command;
   Uint8List payload;
@@ -63,6 +64,7 @@ class MessageHeader {
       Network.mainnet => magicMainnet,
       Network.testnet => magicTestnet,
       Network.testnet4 => magicTestnet4,
+      Network.regtest => magicRegtest,
     };
     final buffer = BytesBuilder();
     buffer.add(magic);
@@ -89,6 +91,7 @@ class MessageHeader {
       Network.mainnet => magicMainnet,
       Network.testnet => magicTestnet,
       Network.testnet4 => magicTestnet4,
+      Network.regtest => magicRegtest,
     })) {
       return Result.error(
         MessageHeaderMagicMismatchException(

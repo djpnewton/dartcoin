@@ -163,6 +163,7 @@ String bech32Encode(
     Network.mainnet => 'bc',
     Network.testnet => 'tb',
     Network.testnet4 => 'tb',
+    Network.regtest => 'bcrt',
   };
   // check scriptPubKey length
   if (scriptPubKey.length < 2) {
@@ -208,7 +209,7 @@ String bech32Encode(
   return bech32String.toString();
 }
 
-Bech32 bech32Decode(String input) {
+Bech32 bech32Decode(String input, {Network defaultTestnet = Network.testnet4}) {
   // split input into human readable part (hrp) and data part
   final oneIndex = input.lastIndexOf('1');
   if (oneIndex == -1) {
@@ -222,7 +223,8 @@ Bech32 bech32Decode(String input) {
   // get the network based on hrp
   final network = switch (hrp) {
     'bc' => Network.mainnet,
-    'tb' => Network.testnet,
+    'tb' => defaultTestnet,
+    'bcrt' => Network.regtest,
     _ => throw ArgumentError(
       'Invalid or unsupported Bech32 human readable part: $hrp',
     ),

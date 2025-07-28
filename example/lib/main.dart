@@ -399,7 +399,7 @@ class TestP2pCommand extends Command<void> {
     final peerRaw = argResults?.option('peer');
     if (peerRaw == null) {
       _log.info('Using dns seed to find peer.');
-      ip = await Peer.ipFromDnsSeed(network);
+      ip = await Peer.ipFromDnsSeed(network, verbose: true);
       port = Peer.defaultPort(network);
     } else {
       final parts = peerRaw.split(':');
@@ -414,7 +414,7 @@ class TestP2pCommand extends Command<void> {
         return;
       }
     }
-    final node = Node(network: network);
+    final node = Node(network: network, verbose: true);
     node.connect(ip: ip, port: port);
   }
 }
@@ -469,13 +469,13 @@ class RegtestExampleCommand extends Command<void> {
       _log.info('proc2: Best block hash after generating 100 blocks: $hash149');
       _log.info('Waiting for proc1 to reach block count 149...');
       await proc1.rpc.waitForBlockCount(149);
-      final bestProc1 = await proc1.rpc.getBestBlockHash();
-      _log.info('proc1: Best block hash after generating 100 blocks: $bestProc1');
-      if (hash149 == bestProc1) {
+      final bestHashProc1 = await proc1.rpc.getBestBlockHash();
+      _log.info('proc1: Best block hash after generating 100 blocks: $bestHashProc1');
+      if (hash149 == bestHashProc1) {
         _log.info('Both processes have the same best block hash after chain reorg.');
       } else {
         _log.warning(
-          'Best block hashes differ between processes: proc1: $bestProc1, proc2: $hash149',
+          'Best block hashes differ between processes: proc1: $bestHashProc1, proc2: $hash149',
         );
       }
     } catch (e) {

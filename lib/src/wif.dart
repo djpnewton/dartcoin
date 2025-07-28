@@ -21,6 +21,7 @@ class Wif {
         Network.mainnet => 0x80,
         Network.testnet => 0xEF,
         Network.testnet4 => 0xEF,
+        Network.regtest => 0xEF,
       },
     ]);
     final suffix = compressed ? Uint8List.fromList([0x01]) : Uint8List(0);

@@ -81,26 +81,25 @@ class CoreJsonRpc {
     return responseData;
   }
 
-  // Convenience methods for common Bitcoin Core RPC calls
+  //
+  // blockchain RPCs
+  //
 
   Future<String> getBestBlockHash() async {
     final response = await call('getbestblockhash');
     return response['result'] as String;
   }
 
-  Future<Map<String, dynamic>> getBlockchainInfo() async {
-    final response = await call('getblockchaininfo');
+  Future<Map<String, dynamic>> getBlock(
+    String blockHash, [
+    int? verbosity,
+  ]) async {
+    final response = await call('getblock', [blockHash, verbosity]);
     return response['result'] as Map<String, dynamic>;
   }
 
-  Future<String> getNewAddress([String? label]) async {
-    final params = label != null ? [label] : null;
-    final response = await call('getnewaddress', params);
-    return response['result'] as String;
-  }
-
-  Future<Map<String, dynamic>> getWalletInfo() async {
-    final response = await call('getwalletinfo');
+  Future<Map<String, dynamic>> getBlockchainInfo() async {
+    final response = await call('getblockchaininfo');
     return response['result'] as Map<String, dynamic>;
   }
 
@@ -124,10 +123,18 @@ class CoreJsonRpc {
     return false;
   }
 
+  //
+  // generating RPCs
+  //
+
   Future<List<dynamic>> generateToAddress(int nblocks, String address) async {
     final response = await call('generatetoaddress', [nblocks, address]);
     return response['result'] as List<dynamic>;
   }
+
+  //
+  // network RPCs
+  //
 
   Future<void> addNode(String node, String command) async {
     await call('addnode', [node, command]);
@@ -137,6 +144,25 @@ class CoreJsonRpc {
     final response = await call('getpeerinfo');
     return response['result'] as List<dynamic>;
   }
+
+  //
+  // wallet RPCs
+  //
+
+  Future<String> getNewAddress([String? label]) async {
+    final params = label != null ? [label] : null;
+    final response = await call('getnewaddress', params);
+    return response['result'] as String;
+  }
+
+  Future<Map<String, dynamic>> getWalletInfo() async {
+    final response = await call('getwalletinfo');
+    return response['result'] as Map<String, dynamic>;
+  }
+
+  //
+  // hidden RPCs
+  //
 
   Future<void> invalidateBlock(String blockHash) async {
     await call('invalidateblock', [blockHash]);

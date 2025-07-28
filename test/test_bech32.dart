@@ -19,6 +19,11 @@ void main() {
       addressTestnet,
       equals('tb1qt2dlehxdppk7utpx7jgrg9vfa9cefpz6yzcvdw'),
     );
+    var addressRegtest = bech32Encode(scriptPubKey, network: Network.regtest);
+    expect(
+      addressRegtest,
+      equals('bcrt1qt2dlehxdppk7utpx7jgrg9vfa9cefpz6xtpp68'),
+    );
     // P2WSH address example
     scriptPubKey = hexToBytes(
       '0020e5e8be796ee121ee037cf429117311a4f3d893dcba6409b41382132992441402',
@@ -33,6 +38,13 @@ void main() {
       addressTestnet,
       equals('tb1quh5tu7twuys7uqmu7s53zuc35nea3y7uhfjqndqnsgfjnyjyzspq0yed2d'),
     );
+    addressRegtest = bech32Encode(scriptPubKey, network: Network.regtest);
+    expect(
+      addressRegtest,
+      equals(
+        'bcrt1quh5tu7twuys7uqmu7s53zuc35nea3y7uhfjqndqnsgfjnyjyzspqzantlh',
+      ),
+    );
     // P2TR address example
     scriptPubKey = hexToBytes(
       '5120be39385a990fedd22a4ed8c810e663677aafa93187c2dafebc65dcd5195b660c',
@@ -46,6 +58,13 @@ void main() {
     expect(
       addressTestnet,
       equals('tb1phcunsk5eplkay2jwmryppenrvaa2l2f3slpd4l4uvhwd2x2mvcxq67cg4l'),
+    );
+    addressRegtest = bech32Encode(scriptPubKey, network: Network.regtest);
+    expect(
+      addressRegtest,
+      equals(
+        'bcrt1phcunsk5eplkay2jwmryppenrvaa2l2f3slpd4l4uvhwd2x2mvcxqh8jwq9',
+      ),
     );
     // Invalid scriptPubKey length
     scriptPubKey = hexToBytes('00145a9bfcdccd086dee2c26f490341589e97194845aFF');

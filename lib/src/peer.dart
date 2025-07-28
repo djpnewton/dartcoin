@@ -65,6 +65,7 @@ class Peer {
   final int port;
   final Network network;
   final String userAgent = '/dartcoin:0.1/';
+  final bool verbose;
 
   final PeerStatusEvent _onStatusChange;
   Socket? _socket;
@@ -78,6 +79,7 @@ class Peer {
     required this.port,
     required this.network,
     required PeerStatusEvent onStatusChange,
+    required this.verbose,
   }) : _onStatusChange = onStatusChange;
 
   static int defaultPort(Network network) {
@@ -85,10 +87,14 @@ class Peer {
       Network.mainnet => 8333,
       Network.testnet => 18333,
       Network.testnet4 => 48333,
+      Network.regtest => 18444,
     };
   }
 
-  static Future<String> ipFromDnsSeed(Network network) async {
+  static Future<String> ipFromDnsSeed(
+    Network network, {
+    bool verbose = false,
+  }) async {
     final seeds = switch (network) {
       Network.mainnet => [
         'seed.bitcoin.sipa.be',
@@ -109,17 +115,24 @@ class Peer {
         'seed.testnet4.bitcoin.sprovoost.nl',
         'seed.testnet4.achownodes.xyz',
       ],
+      Network.regtest => throw UnsupportedError(
+        'No DNS seeds available for regtest network',
+      ),
     };
     final randomSeed =
         seeds[DateTime.now().millisecondsSinceEpoch % seeds.length];
-    _log.info('Using DNS seed: $randomSeed');
+    if (verbose) {
+      _log.info('Using DNS seed: $randomSeed');
+    }
     try {
       final addresses = await InternetAddress.lookup(
         randomSeed,
         type: InternetAddressType.IPv4,
       );
       if (addresses.isNotEmpty && addresses[0].rawAddress.isNotEmpty) {
-        _log.info('Found ${addresses.length} addresses for seed $randomSeed');
+        if (verbose) {
+          _log.info('Found ${addresses.length} addresses for seed $randomSeed');
+        }
         final randomAddress =
             addresses[DateTime.now().millisecondsSinceEpoch % addresses.length];
         _log.info('Random address: ${randomAddress.address}');
@@ -137,14 +150,18 @@ class Peer {
     final localIp = '127.0.0.1';
 
     // connect to the peer
-    _log.info('Connecting to peer: $ip:$port');
+    if (verbose) {
+      _log.info('Connecting to peer: $ip:$port');
+    }
     try {
       _socket = await Socket.connect(ip, port);
       final socket = _socket!;
       _status = PeerStatus.connected;
       final prev = _status;
       _onStatusChange(this, _status, prev);
-      _log.info('Connected to peer: $ip:$port');
+      if (verbose) {
+        _log.info('Connected to peer: $ip:$port');
+      }
       // send version message
       final versionBytes = MessageVersion(
         timestamp: DateTime.now().millisecondsSinceEpoch ~/ 1000,
@@ -157,7 +174,9 @@ class Peer {
         lastBlock: 0,
         relay: false,
       ).toBytes(network);
-      _log.info('>>>>>: $ip:$port, Version');
+      if (verbose) {
+        _log.info('>>>>>: $ip:$port, Version');
+      }
       socket.add(versionBytes);
       // listen for incoming messages
       var msgBuffer = Uint8List(0);
@@ -202,7 +221,9 @@ class Peer {
         },
         onDone: () {
           // Handle socket closure
-          _log.info('Disconnected from peer: $ip:$port');
+          if (verbose) {
+            _log.info('Disconnected from peer: $ip:$port');
+          }
           socket.destroy();
           _socket = null;
           final prev = _status;
@@ -226,6 +247,7 @@ class Peer {
   }
 
   void logMessage(Message message, MessageHeader msgHeader) {
+    if (!verbose) return; // skip logging if verbose is false
     if (message is MessageVersion) {
       _log.info(
         '<<<<<: $ip:$port, Version: ${message.version}, User Agent: ${message.userAgent}, Last Block: ${message.lastBlock}',
@@ -304,17 +326,23 @@ class Peer {
     if (message is MessageVersion) {
     } else if (message is MessageVerack) {
       // send a verack message back to the peer
-      _log.info('>>>>>: $ip:$port, Verack');
+      if (verbose) {
+        _log.info('>>>>>: $ip:$port, Verack');
+      }
       socket.add(MessageVerack().toBytes(network));
       // set status to handshake complete
       final prev = _status;
       _status = PeerStatus.handshakeComplete;
       _onStatusChange(this, _status, prev);
     } else if (message is MessagePing) {
-      _log.info('>>>>>: $ip:$port, Pong');
+      if (verbose) {
+        _log.info('>>>>>: $ip:$port, Pong');
+      }
       socket.add(MessagePong(nonce: message.nonce).toBytes(network));
     } else if (message is MessageInv) {
-      _log.info('>>>>>: $ip:$port, GetData');
+      if (verbose) {
+        _log.info('>>>>>: $ip:$port, GetData');
+      }
       socket.add(MessageGetData(inventory: message.inventory).toBytes(network));
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
@@ -389,9 +417,11 @@ class Peer {
         _onStatusChange(this, _status, prev);
       } else {
         // request next batch of block headers
-        _log.info(
-          '>>>>>: $ip:$port, GetHeaders: ${reverseHash(chainManager.bestChainHead.header.hash()).toHex()}',
-        );
+        if (verbose) {
+          _log.info(
+            '>>>>>: $ip:$port, GetHeaders: ${headerHashNice(chainManager.bestChainHead.header.hash())}',
+          );
+        }
         socket.add(
           MessageGetHeaders(
             headerHashes: chainManager.recentBlockHeadersHashes,
@@ -406,7 +436,9 @@ class Peer {
       _log.warning('No active connection to disconnect from: $ip:$port');
       return;
     }
-    _log.info('Disconnecting from peer: $ip:$port');
+    if (verbose) {
+      _log.info('Disconnecting from peer: $ip:$port');
+    }
     _socket?.destroy();
     _socket = null;
     final prev = _status;
@@ -431,9 +463,11 @@ class Peer {
     final prev = _status;
     _status = PeerStatus.headersSyncing;
     _onStatusChange(this, _status, prev);
-    _log.info(
-      '>>>>>: $ip:$port, GetHeaders: ${reverseHash(chainManager.bestChainHead.header.hash()).toHex()}',
-    );
+    if (verbose) {
+      _log.info(
+        '>>>>>: $ip:$port, GetHeaders: ${headerHashNice(chainManager.bestChainHead.header.hash())}',
+      );
+    }
     socket.add(
       MessageGetHeaders(
         headerHashes: chainManager.recentBlockHeadersHashes,

@@ -63,7 +63,9 @@ class CoreProcess {
     // init rpc
     _rpcPort = rpcPort;
     _rpc = CoreJsonRpc(port: _rpcPort);
-    _log.info('RPC host: $rpcHost, port: $_rpcPort');
+    if (verbose) {
+      _log.info('RPC host: $rpcHost, port: $_rpcPort');
+    }
     // initialize the executable path
     if (executablePath == null || executablePath.isEmpty) {
       // check the BITCOIN_CORE_BIN environment variable
