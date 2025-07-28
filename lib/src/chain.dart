@@ -274,7 +274,6 @@ class ChainManager {
       // it means we have reorged past the file chain head
       // so we need to rewrite the entire headers file (should happen very infrequently)
       if (chainEntries.isEmpty || chainEntries.first.height == 0) {
-        print('reorg rewrite!!!***');
         _blockHeadersFileDelete();
         _blockHeadersFileWrite();
       } else {
