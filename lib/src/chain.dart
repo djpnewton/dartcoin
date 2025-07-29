@@ -475,11 +475,17 @@ class ChainManager {
         // use the last non special minimum difficulty block
         ChainEntry? current = newChainHead.previous;
         while (current != null &&
-            (current.height + 1) % difficultyAdjustmentInterval != 0 &&
+            current.height % difficultyAdjustmentInterval != 0 &&
             current.header.nBits == _genesisBlockHeader.nBits) {
           current = current.previous;
         }
-        return current?.header.nBits ?? _genesisBlockHeader.nBits;
+        if (current == null) {
+          _log.warning(
+            'No previous block found with non-genesis nBits, using genesis nBits',
+          );
+          return _genesisBlockHeader.nBits;
+        }
+        return current.header.nBits;
       }
     }
     // otherwise, use the last block's nBits
@@ -672,8 +678,14 @@ class ChainManager {
     // set the status to active
     // this allows writing block headers to file
     _status = ChainStatus.active;
-    // write the best chain head to file
-    _blockHeadersFileWriteOrAppend();
+    // write the best chain head to file (if it is not already written)
+    if (_fileChainHead == null ||
+        !_compareHashes(
+          _fileChainHead!.header.hash(),
+          _bestChainHead.header.hash(),
+        )) {
+      _blockHeadersFileWriteOrAppend();
+    }
   }
 
   void sync() {
