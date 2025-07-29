@@ -4,6 +4,14 @@ import 'common.dart';
 import 'utils.dart';
 import 'transaction.dart';
 
+Uint8List reverseHash(Uint8List hash) {
+  return Uint8List.fromList(hash.reversed.toList());
+}
+
+String headerHashNice(Uint8List hash) {
+  return reverseHash(hash).toHex().padLeft(64, '0');
+}
+
 class BlockHeader {
   int version;
   Uint8List previousBlockHeaderHash;
@@ -43,6 +51,8 @@ class BlockHeader {
   }
 
   Uint8List hash() => hash256(toBytes());
+
+  String hashNice() => headerHashNice(hash());
 
   BigInt work() {
     final target = bitsToTarget(nBits);

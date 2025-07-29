@@ -107,6 +107,7 @@ void main() {
     // wait for the second process and our node to catch up
     await proc2.rpc.waitForBlockCount(100);
     await node.waitForBlockCount(100);
+    final hash100 = await proc1.rpc.getBestBlockHash();
     // get our nodes header file creation time
     expect(node.blockHeadersFilePath, isNotNull);
     final genesisTimestamp = _getTimestampOfGenesisInHeaderFile(node);
@@ -128,5 +129,30 @@ void main() {
     // check that the node's block headers file has been rewritten (_blockHeadersFileWriteOrAppend will rewrite the file if the chain head has reorged past the file head)
     final newGenesisTimestamp = _getTimestampOfGenesisInHeaderFile(node);
     expect(newGenesisTimestamp, greaterThan(genesisTimestamp));
+    // invalidate block 149 in the first process
+    await proc1.rpc.invalidateBlock(hash149);
+    // generate 1 block
+    await proc1.rpc.generateToAddress(1, dummyAddr1);
+    final rivalHash149 = await proc1.rpc.getBestBlockHash();
+    expect(hash149, isNot(rivalHash149));
+    // wait for our node to catch up
+    await node.waitForHashInChainHeads(rivalHash149);
+    final chainHeadHashes = node
+        .chainHeads()
+        .map((head) => head.header.hashNice())
+        .toList();
+    // should have 3 chain heads, one for the best chain and one for the rival chain and the original chain
+    expect(chainHeadHashes.length, equals(3));
+    expect(chainHeadHashes, contains(hash100));
+    expect(chainHeadHashes, contains(hash149));
+    expect(chainHeadHashes, contains(rivalHash149));
+    // should still have the same best block hash
+    expect(node.bestBlockHash(), equals(hash149));
+    // generate 100 blocks to remove the alternate chain heads
+    await proc1.rpc.generateToAddress(100, dummyAddr1);
+    // wait for our node to catch up
+    await node.waitForBlockCount(249);
+    // should have only one chain head now
+    expect(node.chainHeads().length, equals(1));
   });
 }

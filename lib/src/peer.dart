@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:logging/logging.dart';
 
 import 'p2p_messages.dart';
+import 'block.dart';
 import 'chain.dart';
 import 'utils.dart';
 import 'common.dart';

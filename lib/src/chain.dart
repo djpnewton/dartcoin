@@ -9,14 +9,6 @@ import 'block.dart';
 
 final _log = Logger('Chain');
 
-Uint8List reverseHash(Uint8List hash) {
-  return Uint8List.fromList(hash.reversed.toList());
-}
-
-String headerHashNice(Uint8List hash) {
-  return reverseHash(hash).toHex().padLeft(64, '0');
-}
-
 abstract class Node<Self extends Node<Self>> {
   Self? previous;
   Node({this.previous});
@@ -60,6 +52,7 @@ class ChainManager {
 
   ChainStatus get status => _status;
   ChainEntry get bestChainHead => _bestChainHead;
+  List<ChainEntry> get chainHeads => _chainHeads;
 
   ChainManager({
     required this.network,
@@ -352,6 +345,7 @@ class ChainManager {
       }
     }
     // check if the header is a reorg of one of the heads (up to maxReorgDepth)
+    final headerHash = header.hash();
     for (final chainHead in _chainHeads) {
       if (chainHead.height < _bestChainHead.height - maxReorgDepth) continue;
       final initialHeight = chainHead.height;
@@ -359,10 +353,11 @@ class ChainManager {
       while (current != null &&
           current.height >= 0 &&
           current.height >= initialHeight - maxReorgDepth) {
-        if (_compareHashes(
-          current.header.hash(),
-          header.previousBlockHeaderHash,
-        )) {
+        final currentHash = current.header.hash();
+        if (_compareHashes(currentHash, headerHash)) {
+          return null; // already in the chain, no new chainhead found
+        }
+        if (_compareHashes(currentHash, header.previousBlockHeaderHash)) {
           return _makeChainEntry(header, current);
         }
         current = current.previous;
@@ -510,6 +505,11 @@ class ChainManager {
     }
     // 2) if the new chainhead does not replace any existing chainhead it must be a reorg so add it as a new chainhead
     if (!replacedHead) {
+      if (verbose) {
+        _log.info(
+          'Adding new chainhead: ${newChainHead.header.hashNice()} at height ${newChainHead.height}',
+        );
+      }
       _chainHeads.add(newChainHead);
     }
     // 3) find the new best chainhead based on chain work (and time created)
@@ -559,7 +559,11 @@ class ChainManager {
   }
 
   AddHeadersResult addHeaders(List<BlockHeader> headers) {
+    if (headers.isEmpty) {
+      return AddHeadersResult.success;
+    }
     final initialBest = _bestChainHead;
+    var headersAdded = 0;
     for (final header in headers) {
       //print('add header: ${headerHashNice(header.hash())} (best height: ${_bestChainHead.height}, ..${headerHashNice(_bestChainHead.header.hash()).substring(54)})');
       // create new chainhead from block header
@@ -571,7 +575,7 @@ class ChainManager {
         _log.warning(
           'Received header (${headerHashNice(header.hash())}, prev: ..${headerHashNice(header.previousBlockHeaderHash).substring(54)}) does not build on (or reorg) any known chainhead',
         );
-        return AddHeadersResult.noChainHead; // abort adding headers
+        continue; // skip this header
       }
       final headerHash = newChainHead.header.hash();
       final headerHashReversed = reverseHash(headerHash);
@@ -625,10 +629,16 @@ class ChainManager {
       }
       // update heads
       _updateHeads(newChainHead);
+      // update number of headers added
+      headersAdded += 1;
+    }
+    // if no headers were added, return no chain head found
+    if (headersAdded == 0) {
+      return AddHeadersResult.noChainHead;
     }
     if (verbose) {
       _log.info(
-        'Added ${headers.length} headers, new height: ${_bestChainHead.height}, chain work: ${_bestChainHead.chainWork.toRadixString(16)}',
+        'Added $headersAdded headers, new height: ${_bestChainHead.height}, chain work: ${_bestChainHead.chainWork.toRadixString(16)}',
       );
     }
     // if the chain is active, write the headers to file

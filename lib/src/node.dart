@@ -5,6 +5,7 @@ import 'package:collection/collection.dart';
 
 import 'common.dart';
 import 'chain.dart';
+import 'block.dart';
 import 'peer.dart';
 
 final _log = Logger('Node');
@@ -167,6 +168,10 @@ class Node {
     return headerHashNice(_chainManager.bestChainHead.header.hash());
   }
 
+  List<ChainEntry> chainHeads() {
+    return _chainManager.chainHeads;
+  }
+
   Future<bool> waitForBlockCount(
     int count, {
     Duration timeout = const Duration(seconds: 30),
@@ -192,6 +197,22 @@ class Node {
       final peer = _peers.firstWhereOrNull((p) => p.ip == ip && p.port == port);
       if (peer?.status == status) {
         return true;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    return false;
+  }
+
+  Future<bool> waitForHashInChainHeads(
+    String hash, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final startTime = DateTime.now();
+    while (DateTime.now().difference(startTime) < timeout) {
+      for (final head in _chainManager.chainHeads) {
+        if (headerHashNice(head.header.hash()) == hash) {
+          return true;
+        }
       }
       await Future<void>.delayed(const Duration(seconds: 1));
     }
