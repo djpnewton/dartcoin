@@ -1,12 +1,21 @@
-// ignore_for_file: avoid_print
-
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:logging/logging.dart';
 
 import 'package:dartcoin/dartcoin.dart';
+
+final _log = Logger('main');
+
+void initLogger() {
+  Logger.root.level = Level.ALL;
+  Logger.root.onRecord.listen((record) {
+    // ignore: avoid_print
+    print('${record.level.name}: ${record.time}: ${record.message}');
+  });
+}
 
 class ExampleCommand extends Command<void> {
   @override
@@ -20,83 +29,85 @@ class ExampleCommand extends Command<void> {
   void run() {
     final mnemonic =
         'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-    print('Mnemonic words: $mnemonic');
+    _log.info('Mnemonic words: $mnemonic');
 
-    print('Validating mnemonic: ${mnemonicValid(mnemonic)}');
+    _log.info('Validating mnemonic: ${mnemonicValid(mnemonic)}');
 
     final seed = mnemonicToSeed(mnemonic);
-    print('Seed (hex): $seed');
+    _log.info('Seed (hex): $seed');
 
     final masterKey = PrivateKey.fromSeed(hexToBytes(seed));
-    print('Master Extended Key:');
-    print('  Private Key: ${bytesToHex(masterKey.privateKey)}');
-    print('  Public Key:  ${bytesToHex(masterKey.publicKey)}');
-    print('  Chain Code:  ${bytesToHex(masterKey.chainCode)}');
+    _log.info('Master Extended Key:');
+    _log.info('  Private Key: ${bytesToHex(masterKey.privateKey)}');
+    _log.info('  Public Key:  ${bytesToHex(masterKey.publicKey)}');
+    _log.info('  Chain Code:  ${bytesToHex(masterKey.chainCode)}');
 
     final childKey = masterKey.childPrivateKey(0x80000000, hardened: true);
-    print('Child Extended Key m/0\':');
-    print('  Private Key:  ${bytesToHex(childKey.privateKey)}');
-    print('  Public Key:   ${bytesToHex(childKey.publicKey)}');
-    print('  Chain Code:   ${bytesToHex(childKey.chainCode)}');
-    print('  Depth:        ${intToHex(childKey.depth)}');
-    print('  Parent Fingerprint: ${intToHex(childKey.parentFingerprint)}');
-    print('  Child Number: ${intToHex(childKey.childNumber)}');
+    _log.info('Child Extended Key m/0\':');
+    _log.info('  Private Key:  ${bytesToHex(childKey.privateKey)}');
+    _log.info('  Public Key:   ${bytesToHex(childKey.publicKey)}');
+    _log.info('  Chain Code:   ${bytesToHex(childKey.chainCode)}');
+    _log.info('  Depth:        ${intToHex(childKey.depth)}');
+    _log.info('  Parent Fingerprint: ${intToHex(childKey.parentFingerprint)}');
+    _log.info('  Child Number: ${intToHex(childKey.childNumber)}');
     final xprv = childKey.xprv();
-    print('  xprv: $xprv');
+    _log.info('  xprv: $xprv');
     final childKeyParsed = PrivateKey.fromXPrv(xprv);
-    print('Parsed Child Extended Key:');
-    print('  Private Key:  ${bytesToHex(childKeyParsed.privateKey)}');
-    print('  Public Key:   ${bytesToHex(childKeyParsed.publicKey)}');
-    print('  Chain Code:   ${bytesToHex(childKeyParsed.chainCode)}');
-    print('  Depth:        ${intToHex(childKeyParsed.depth)}');
-    print(
+    _log.info('Parsed Child Extended Key:');
+    _log.info('  Private Key:  ${bytesToHex(childKeyParsed.privateKey)}');
+    _log.info('  Public Key:   ${bytesToHex(childKeyParsed.publicKey)}');
+    _log.info('  Chain Code:   ${bytesToHex(childKeyParsed.chainCode)}');
+    _log.info('  Depth:        ${intToHex(childKeyParsed.depth)}');
+    _log.info(
       '  Parent Fingerprint: ${intToHex(childKeyParsed.parentFingerprint)}',
     );
-    print('  Child Number: ${intToHex(childKeyParsed.childNumber)}');
+    _log.info('  Child Number: ${intToHex(childKeyParsed.childNumber)}');
 
     final childPubKey = masterKey.childPublicKey(1);
-    print('Child Public Key m/1:');
-    print('  Public Key:   ${bytesToHex(childPubKey.publicKey)}');
-    print('  Chain Code:   ${bytesToHex(childPubKey.chainCode)}');
-    print('  Depth:        ${intToHex(childPubKey.depth)}');
-    print('  Parent Fingerprint: ${intToHex(childPubKey.parentFingerprint)}');
-    print('  Child Number: ${intToHex(childPubKey.childNumber)}');
+    _log.info('Child Public Key m/1:');
+    _log.info('  Public Key:   ${bytesToHex(childPubKey.publicKey)}');
+    _log.info('  Chain Code:   ${bytesToHex(childPubKey.chainCode)}');
+    _log.info('  Depth:        ${intToHex(childPubKey.depth)}');
+    _log.info(
+      '  Parent Fingerprint: ${intToHex(childPubKey.parentFingerprint)}',
+    );
+    _log.info('  Child Number: ${intToHex(childPubKey.childNumber)}');
     final xpub = childPubKey.xpub();
-    print('  xpub: $xpub');
+    _log.info('  xpub: $xpub');
     final childPubKeyParsed = PublicKey.fromXPub(xpub);
-    print('Parsed Child Public Key:');
-    print('  Public Key:   ${bytesToHex(childPubKeyParsed.publicKey)}');
-    print('  Chain Code:   ${bytesToHex(childPubKeyParsed.chainCode)}');
-    print('  Depth:        ${intToHex(childPubKeyParsed.depth)}');
-    print(
+    _log.info('Parsed Child Public Key:');
+    _log.info('  Public Key:   ${bytesToHex(childPubKeyParsed.publicKey)}');
+    _log.info('  Chain Code:   ${bytesToHex(childPubKeyParsed.chainCode)}');
+    _log.info('  Depth:        ${intToHex(childPubKeyParsed.depth)}');
+    _log.info(
       '  Parent Fingerprint: ${intToHex(childPubKeyParsed.parentFingerprint)}',
     );
-    print('  Child Number: ${intToHex(childPubKeyParsed.childNumber)}');
+    _log.info('  Child Number: ${intToHex(childPubKeyParsed.childNumber)}');
 
     var address = childPubKey.address(network: Network.mainnet);
-    print('P2PKH Address (m/1): $address');
+    _log.info('P2PKH Address (m/1): $address');
     address = childPubKey.address(network: Network.testnet);
-    print('P2PKH Address (m/1) Testnet: $address');
+    _log.info('P2PKH Address (m/1) Testnet: $address');
     address = childPubKey.address(
       network: Network.mainnet,
       scriptType: ScriptType.p2shP2wpkh,
     );
-    print('P2SH-P2WPKH Address (m/1): $address');
+    _log.info('P2SH-P2WPKH Address (m/1): $address');
     address = childPubKey.address(
       network: Network.testnet,
       scriptType: ScriptType.p2shP2wpkh,
     );
-    print('P2SH-P2WPKH Address (m/1) Testnet: $address');
+    _log.info('P2SH-P2WPKH Address (m/1) Testnet: $address');
     address = childPubKey.address(
       network: Network.mainnet,
       scriptType: ScriptType.p2wpkh,
     );
-    print('P2WPKH Address (m/1): $address');
+    _log.info('P2WPKH Address (m/1): $address');
     address = childPubKey.address(
       network: Network.testnet,
       scriptType: ScriptType.p2wpkh,
     );
-    print('P2WPKH Address (m/1) Testnet: $address');
+    _log.info('P2WPKH Address (m/1) Testnet: $address');
   }
 }
 
@@ -107,11 +118,11 @@ class SignCommand extends Command<void> {
   final description = 'Sign a message with a private key.';
 
   SignCommand() {
-    // TODO: take the private key from a standard input or file?
     argParser.addOption(
       'private-key',
       abbr: 'p',
-      help: 'The private key in hex/WIF/xpriv format.',
+      help:
+          'The private key filename (single line file in hex/WIF/xpriv format).',
       mandatory: true,
     );
     argParser.addOption(
@@ -160,11 +171,29 @@ class SignCommand extends Command<void> {
 
   @override
   void run() {
-    final pkRaw = argResults?.option('private-key');
+    final pkFilename = argResults?.option('private-key');
     final message = argResults?.option('message');
-    if (pkRaw == null || message == null) {
+    if (pkFilename == null || message == null) {
       // should not happen due to mandatory options, but just in case
-      print('Please provide both a private key and a message to sign.');
+      _log.info(
+        'Please provide both a private key filename and a message to sign.',
+      );
+      return;
+    }
+    // load private key from file
+    String pkRaw;
+    if (!File(pkFilename).existsSync()) {
+      _log.info('Private key file not found: $pkFilename');
+      return;
+    }
+    try {
+      pkRaw = File(pkFilename).readAsStringSync().trim();
+      if (pkRaw.isEmpty) {
+        _log.info('Private key file is empty: $pkFilename');
+        return;
+      }
+    } catch (e) {
+      _log.info('Error reading private key file: $pkFilename');
       return;
     }
     // load private key from hex, WIF, or xpriv
@@ -180,7 +209,7 @@ class SignCommand extends Command<void> {
         try {
           pk = PrivateKey.fromXPrv(pkRaw);
         } catch (e) {
-          print('Invalid private key format: $pkRaw');
+          _log.info('Invalid private key format: $pkRaw');
           return;
         }
       }
@@ -190,8 +219,8 @@ class SignCommand extends Command<void> {
       // sign the message hash in DER format
       final signature = derSign(pk, utf8.encode(message));
       // print the signature in hex format
-      print('Public Key: ${bytesToHex(signature.publicKey)}');
-      print('Signature (DER): ${bytesToHex(signature.signature)}');
+      _log.info('Public Key: ${bytesToHex(signature.publicKey)}');
+      _log.info('Signature (DER): ${bytesToHex(signature.signature)}');
     } else if (type == 'bitcoin-signmessage') {
       // get the network and script type
       final network = switch (argResults?.option('network')) {
@@ -213,8 +242,8 @@ class SignCommand extends Command<void> {
         scriptType,
       );
       // print the signature
-      print('Address: ${signature.address}');
-      print('Signature: ${signature.signature}');
+      _log.info('Address: ${signature.address}');
+      _log.info('Signature: ${signature.signature}');
     }
   }
 }
@@ -252,7 +281,9 @@ class VerifyCommand extends Command<void> {
     final message = argResults?.option('message');
     final signature = argResults?.option('signature');
     if (pubKeyRaw == null || message == null || signature == null) {
-      print('Please provide a public key, message, and signature to verify.');
+      _log.info(
+        'Please provide a public key, message, and signature to verify.',
+      );
       return;
     }
     try {
@@ -261,7 +292,7 @@ class VerifyCommand extends Command<void> {
       final pk = PublicKey.fromPublicKey(pubKeyBytes);
       // verify the signature
       final result = derVerify(pk, utf8.encode(message), hexToBytes(signature));
-      print('Signature valid: $result');
+      _log.info('Signature valid: $result');
     } catch (e) {
       // if not a valid public key, try to parse it as a Bitcoin address
       try {
@@ -270,9 +301,9 @@ class VerifyCommand extends Command<void> {
           utf8.encode(message),
           signature,
         );
-        print('Signature valid: $result');
+        _log.info('Signature valid: $result');
       } catch (e) {
-        print('Invalid public key or Bitcoin address: $pubKeyRaw');
+        _log.info('Invalid public key or Bitcoin address: $pubKeyRaw');
         return;
       }
     }
@@ -285,33 +316,182 @@ class PrivateKeyCommand extends Command<void> {
   @override
   final description = 'Format a private key to WIF';
   PrivateKeyCommand() {
-    // TODO: take the private key from a standard input or file?
     argParser.addOption(
       'private-key',
       abbr: 'p',
-      help: 'The private key in hex format.',
+      help: 'The private key file (single line in hex format).',
       mandatory: true,
     );
   }
   @override
   void run() {
-    final pkRaw = argResults?.option('private-key');
-    if (pkRaw == null) {
-      print('Please provide a private key in hex format.');
+    final pkFilename = argResults?.option('private-key');
+    if (pkFilename == null) {
+      _log.info('Please provide a private key file.');
+      return;
+    }
+    // check if the file exists
+    if (!File(pkFilename).existsSync()) {
+      _log.info('Private key file not found: $pkFilename');
+      return;
+    }
+    // read the private key from the file
+    String pkRaw;
+    try {
+      pkRaw = File(pkFilename).readAsStringSync().trim();
+      if (pkRaw.isEmpty) {
+        _log.info('Private key file is empty: $pkFilename');
+        return;
+      }
+    } catch (e) {
+      _log.info('Error reading private key file: $pkFilename');
       return;
     }
     try {
       final pkBytes = hexToBytes(pkRaw);
       final pk = PrivateKey.fromPrivateKey(pkBytes);
       final wif = Wif(Network.mainnet, pk.privateKey, true);
-      print('WIF: ${wif.toWifString()}');
+      _log.info('WIF: ${wif.toWifString()}');
     } catch (e) {
-      print('Invalid private key format: $pkRaw');
+      _log.info('Invalid private key format: $pkRaw');
     }
   }
 }
 
+class TestP2pCommand extends Command<void> {
+  @override
+  final name = 'test-p2p';
+  @override
+  final description = 'Test P2P functionality.';
+
+  TestP2pCommand() {
+    argParser.addOption(
+      'peer',
+      abbr: 'p',
+      help:
+          'The peer to connect to in the format <ip>:<port>. If ommitted, a dns seed will be used.',
+    );
+    argParser.addOption(
+      'network',
+      abbr: 'n',
+      help: 'The Bitcoin network to use.',
+      allowed: ['mainnet', 'testnet', 'testnet4'],
+      defaultsTo: 'mainnet',
+      allowedHelp: {
+        'mainnet': 'Use the main Bitcoin network.',
+        'testnet': 'Use the Bitcoin test network 3.',
+        'testnet4': 'Use the Bitcoin test network 4.',
+      },
+    );
+  }
+
+  @override
+  void run() async {
+    String? ip;
+    int? port;
+    final network = switch (argResults?.option('network')) {
+      'mainnet' => Network.mainnet,
+      'testnet' => Network.testnet,
+      'testnet4' => Network.testnet4,
+      _ => throw ArgumentError('Invalid network type.'),
+    };
+    _log.info('Network: ${network.name}');
+    final peerRaw = argResults?.option('peer');
+    if (peerRaw == null) {
+      _log.info('Using dns seed to find peer.');
+      ip = await Peer.ipFromDnsSeed(network, verbose: true);
+      port = Peer.defaultPort(network);
+    } else {
+      final parts = peerRaw.split(':');
+      if (parts.length != 2) {
+        _log.info('Invalid peer format. Use <ip>:<port>.');
+        return;
+      }
+      ip = parts[0];
+      port = int.tryParse(parts[1]);
+      if (port == null || port <= 0 || port > 65535) {
+        _log.info('Invalid port number: $parts[1]');
+        return;
+      }
+    }
+    final node = Node(network: network, verbose: true);
+    node.connect(ip: ip, port: port);
+  }
+}
+
+class RegtestExampleCommand extends Command<void> {
+  @override
+  final name = 'regtest-example';
+  @override
+  final description = 'An example command for regtest network.';
+
+  RegtestExampleCommand();
+
+  @override
+  void run() async {
+    final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
+    final dummyAddr2 = 'mjcNxNEUrMs29U3wSdd7UZ54KGweZAehn6';
+    _log.info('Starting bitcoin core in regtest mode...');
+    final proc1 = CoreProcess(verbose: false, p2pPort: 18444, rpcPort: 18443);
+    await proc1.start();
+    final proc2 = CoreProcess(verbose: false, p2pPort: 18544, rpcPort: 18543);
+    await proc2.start();
+
+    // Listen for SIGINT (Ctrl+C)
+    ProcessSignal.sigint.watch().listen((signal) async {
+      _log.info('Ctrl+C detected. Cleaning up...');
+      await proc1.stop();
+      await proc2.stop();
+      exit(0); // Exit the program gracefully
+    });
+
+    await proc1.waitTillInitialized();
+    await proc2.waitTillInitialized();
+
+    try {
+      await proc2.rpc.addNode('${proc1.p2pHost}:${proc1.p2pPort}', 'add');
+      _log.info(
+        'proc2: "addnode ${proc1.p2pHost}:${proc1.p2pPort} add" command executed.',
+      );
+      await proc1.rpc.generateToAddress(50, dummyAddr1);
+      final hash50 = await proc1.rpc.getBestBlockHash();
+      _log.info('proc1: Best block hash after 50 blocks: $hash50');
+      await proc1.rpc.generateToAddress(50, dummyAddr1);
+      _log.info('Waiting for block count to reach 100 on proc2...');
+      await proc2.rpc.waitForBlockCount(100);
+      _log.info('proc2: invalidating block $hash50');
+      await proc2.rpc.invalidateBlock(hash50);
+      final hash49 = await proc2.rpc.getBestBlockHash();
+      _log.info('proc2: Best block hash after invalidation: $hash49');
+      await proc2.rpc.generateToAddress(100, dummyAddr2);
+      _log.info('proc2: Generated 100 blocks after invalidation.');
+      final hash149 = await proc2.rpc.getBestBlockHash();
+      _log.info('proc2: Best block hash after generating 100 blocks: $hash149');
+      _log.info('Waiting for proc1 to reach block count 149...');
+      await proc1.rpc.waitForBlockCount(149);
+      final bestHashProc1 = await proc1.rpc.getBestBlockHash();
+      _log.info('proc1: Best block hash after generating 100 blocks: $bestHashProc1');
+      if (hash149 == bestHashProc1) {
+        _log.info('Both processes have the same best block hash after chain reorg.');
+      } else {
+        _log.warning(
+          'Best block hashes differ between processes: proc1: $bestHashProc1, proc2: $hash149',
+        );
+      }
+    } catch (e) {
+      _log.severe('Error connecting to regtest node: $e');
+    }
+    //sleep(const Duration(seconds: 50)); // wait for a bit to see the logs
+    await proc1.stop();
+    await proc2.stop();
+    _log.info('Regtest example command completed.');
+    exit(0); // not sure why this is needed :(
+  }
+}
+
 void main(List<String> args) {
+  initLogger();
+
   final runner =
       CommandRunner<void>(
           'dartcoin',
@@ -320,13 +500,21 @@ void main(List<String> args) {
         ..addCommand(ExampleCommand())
         ..addCommand(SignCommand())
         ..addCommand(VerifyCommand())
-        ..addCommand(PrivateKeyCommand());
-  // ignore: inference_failure_on_untyped_parameter
-  runner.run(args).catchError((error) {
-    if (error is! UsageException) print('Error: $error\n------\n');
-    print(runner.usage);
-    exit(64); // Exit code 64 indicates a usage error.
-  });
+        ..addCommand(PrivateKeyCommand())
+        ..addCommand(TestP2pCommand())
+        ..addCommand(RegtestExampleCommand());
+  runner
+      .run(args)
+      .catchError((dynamic e) {
+        // ignore: avoid_print
+        print(e);
+        exit(64); // Exit code 64 indicates a usage error.
+      }, test: (e) => e is UsageException)
+      .catchError((dynamic e) {
+        // ignore: avoid_print
+        print(e);
+        exit(1);
+      });
 }
 
 Uint8List intToBytes(int value) {

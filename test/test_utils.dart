@@ -114,4 +114,46 @@ void main() {
 
     expect(() => compactSize(-1), throwsArgumentError);
   });
+  test('compactSizeParse() parses compact size bytes', () {
+    var cspr = compactSizeParse(Uint8List.fromList([0x00]));
+    expect(cspr.value, equals(0));
+    expect(cspr.bytesRead, equals(1));
+    cspr = compactSizeParse(Uint8List.fromList([0x01]));
+    expect(cspr.value, equals(1));
+    expect(cspr.bytesRead, equals(1));
+    cspr = compactSizeParse(hexToBytes('fdfd00'));
+    expect(cspr.value, equals(253));
+    expect(cspr.bytesRead, equals(3));
+    cspr = compactSizeParse(hexToBytes('fdffff'));
+    expect(cspr.value, equals(65535));
+    expect(cspr.bytesRead, equals(3));
+    cspr = compactSizeParse(hexToBytes('fe00000100'));
+    expect(cspr.value, equals(65536));
+    expect(cspr.bytesRead, equals(5));
+    cspr = compactSizeParse(hexToBytes('feffffffff'));
+    expect(cspr.value, equals(4294967295));
+    expect(cspr.bytesRead, equals(5));
+    cspr = compactSizeParse(hexToBytes('ff0000000001000000'));
+    expect(cspr.value, equals(4294967296));
+    expect(cspr.bytesRead, equals(9));
+    cspr = compactSizeParse(hexToBytes('ffffffffffffffff7f'));
+    expect(cspr.value, equals(9223372036854775807));
+    expect(cspr.bytesRead, equals(9));
+    expect(
+      () => compactSizeParse(Uint8List.fromList([])),
+      throwsFormatException,
+    );
+    expect(
+      () => compactSizeParse(Uint8List.fromList([0xfd])),
+      throwsFormatException,
+    );
+    expect(
+      () => compactSizeParse(Uint8List.fromList([0xfe])),
+      throwsFormatException,
+    );
+    expect(
+      () => compactSizeParse(Uint8List.fromList([0xff])),
+      throwsFormatException,
+    );
+  });
 }

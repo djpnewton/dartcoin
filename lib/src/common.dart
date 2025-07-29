@@ -2,7 +2,8 @@ import 'dart:typed_data';
 
 enum Network {
   mainnet, // Main Bitcoin network
-  testnet, // Bitcoin test network
+  testnet, // Bitcoin test network 3
+  testnet4, // Bitcoin test network 4
   regtest, // Bitcoin regression test network
 }
 

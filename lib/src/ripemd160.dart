@@ -2,6 +2,8 @@
 
 import 'dart:typed_data';
 
+import 'utils.dart';
+
 class _State {
   int h0;
   int h1;
@@ -148,19 +150,13 @@ Uint8List ripemd160(Uint8List input) {
     assert(block.length == 64, 'Block must be 64 bytes');
     state = _compress(state, block);
   }
-  // cant use setUint64 as it is not available in dart2js
-  final lengthUpper = (input.length * 8) >> 32;
-  final lengthLower = (input.length * 8) & 0xffffffff;
   // pad the final 1 or 2 blocks
   final padding = Uint8List.fromList([
     0x80, // append a single 1 bit (0x80)
     // padding zeros
     ...List.filled((119 - input.length) & 63, 0),
     // append the length of the input
-    ...Uint8List(4)
-      ..buffer.asByteData().setUint32(0, lengthLower, Endian.little),
-    ...Uint8List(4)
-      ..buffer.asByteData().setUint32(0, lengthUpper, Endian.little),
+    ...setUint64JsSafe(input.length * 8, endian: Endian.little),
   ]);
   final finalBlocks = Uint8List.fromList([
     ...input.sublist(input.length & ~63),

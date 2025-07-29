@@ -25,6 +25,14 @@ Uint8List hexToBytes(String hex) {
   return byteList;
 }
 
+extension HexString on String {
+  Uint8List toBytes() => hexToBytes(this);
+}
+
+extension HexUint8List on Uint8List {
+  String toHex() => bytesToHex(this);
+}
+
 Uint8List randomBits(int bits) {
   assert(bits > 0);
   assert(bits % 8 == 0);
@@ -131,5 +139,81 @@ Uint8List compactSize(int x) {
   } else {
     // wont get hit as 0x7FFFFFFFFFFFFFFF is the max for a signed 64-bit integer
     throw ArgumentError('Integer too large for varint encoding: $x');
+  }
+}
+
+class CompactSizeParseResult {
+  final int value;
+  final int bytesRead;
+
+  CompactSizeParseResult(this.value, this.bytesRead);
+}
+
+CompactSizeParseResult compactSizeParse(Uint8List buffer) {
+  if (buffer.isEmpty) {
+    throw FormatException('Buffer is empty');
+  }
+  final firstByte = buffer[0];
+  if (firstByte < 0xFD) {
+    return CompactSizeParseResult(firstByte, 1);
+  } else if (firstByte == 0xFD) {
+    if (buffer.length < 3) {
+      throw FormatException('Buffer too short for compact size');
+    }
+    return CompactSizeParseResult(buffer[1] | (buffer[2] << 8), 3);
+  } else if (firstByte == 0xFE) {
+    if (buffer.length < 5) {
+      throw FormatException('Buffer too short for compact size');
+    }
+    return CompactSizeParseResult(
+      buffer[1] | (buffer[2] << 8) | (buffer[3] << 16) | (buffer[4] << 24),
+      5,
+    );
+  } else if (firstByte == 0xFF) {
+    if (buffer.length < 9) {
+      throw FormatException('Buffer too short for compact size');
+    }
+    return CompactSizeParseResult(
+      buffer[1] |
+          (buffer[2] << 8) |
+          (buffer[3] << 16) |
+          (buffer[4] << 24) |
+          (buffer[5] << 32) |
+          (buffer[6] << 40) |
+          (buffer[7] << 48) |
+          (buffer[8] << 56),
+      9,
+    );
+  } else {
+    throw FormatException('Invalid first byte for compact size: $firstByte');
+  }
+}
+
+/// dart2js does not support setUint64
+Uint8List setUint64JsSafe(int value, {Endian endian = Endian.big}) {
+  final buffer = Uint8List(8);
+  final byteData = buffer.buffer.asByteData();
+  if (endian == Endian.big) {
+    byteData.setUint32(0, (value >> 32) & 0xFFFFFFFF, Endian.big);
+    byteData.setUint32(4, value & 0xFFFFFFFF, Endian.big);
+  } else {
+    byteData.setUint32(4, (value >> 32) & 0xFFFFFFFF, Endian.little);
+    byteData.setUint32(0, value & 0xFFFFFFFF, Endian.little);
+  }
+  return buffer;
+}
+
+/// dart2js does not support getUint64
+int getUint64JsSafe(Uint8List bytes, {Endian endian = Endian.big}) {
+  if (bytes.length < 8) {
+    throw ArgumentError('Bytes must be at least 8 bytes long');
+  }
+  final byteData = bytes.buffer.asByteData();
+  if (endian == Endian.big) {
+    return (byteData.getUint32(0, Endian.big) << 32) |
+        byteData.getUint32(4, Endian.big);
+  } else {
+    return (byteData.getUint32(4, Endian.little) << 32) |
+        byteData.getUint32(0, Endian.little);
   }
 }
