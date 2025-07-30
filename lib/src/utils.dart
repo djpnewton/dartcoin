@@ -46,15 +46,25 @@ Uint8List randomBits(int bits) {
   return byteArray;
 }
 
-BigInt bytesToBigInt(Uint8List bytes) {
+BigInt bytesToBigInt(Uint8List bytes, {Endian endian = Endian.big}) {
   BigInt result = BigInt.zero;
-  for (int i = 0; i < bytes.length; i++) {
-    result = (result << 8) + BigInt.from(bytes[i]);
+  if (endian == Endian.big) {
+    for (int i = 0; i < bytes.length; i++) {
+      result = (result << 8) + BigInt.from(bytes[i]);
+    }
+  } else {
+    for (int i = bytes.length - 1; i >= 0; i--) {
+      result = (result << 8) + BigInt.from(bytes[i]);
+    }
   }
   return result;
 }
 
-Uint8List bigIntToBytes(BigInt value, {int? minLength}) {
+Uint8List bigIntToBytes(
+  BigInt value, {
+  int? minLength,
+  Endian endian = Endian.big,
+}) {
   if (minLength != null && minLength < 0) {
     throw ArgumentError('Length must be non-negative');
   }
@@ -62,13 +72,25 @@ Uint8List bigIntToBytes(BigInt value, {int? minLength}) {
     throw ArgumentError('Value must be non-negative');
   }
   final byteList = <int>[];
-  while (value > BigInt.zero) {
-    byteList.add((value & BigInt.from(0xFF)).toInt());
-    value >>= 8;
-  }
-  if (minLength != null) {
-    while (byteList.length < minLength) {
-      byteList.add(0);
+  if (endian == Endian.big) {
+    while (value > BigInt.zero) {
+      byteList.add((value & BigInt.from(0xFF)).toInt());
+      value >>= 8;
+    }
+    if (minLength != null) {
+      while (byteList.length < minLength) {
+        byteList.add(0);
+      }
+    }
+  } else {
+    while (value > BigInt.zero) {
+      byteList.insert(0, (value & BigInt.from(0xFF)).toInt());
+      value >>= 8;
+    }
+    if (minLength != null) {
+      while (byteList.length < minLength) {
+        byteList.insert(0, 0);
+      }
     }
   }
   return Uint8List.fromList(byteList.reversed.toList());
