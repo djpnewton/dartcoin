@@ -33,21 +33,41 @@ void main() {
   });
   test('bytesToBigInt() converts bytes to BigInt', () {
     var bytes = Uint8List.fromList([0x01, 0x02, 0x03, 0x04]);
-    expect(bytesToBigInt(bytes), equals(BigInt.from(0x01020304)));
+    expect(
+      bytesToBigInt(bytes, endian: Endian.big),
+      equals(BigInt.from(0x01020304)),
+    );
+    expect(
+      bytesToBigInt(bytes, endian: Endian.little),
+      equals(BigInt.from(0x04030201)),
+    );
   });
   test('bigIntToBytes() converts BigInt to bytes', () {
+    // big endian
     var value = BigInt.from(0x01020304);
-    var bytes = bigIntToBytes(value);
+    var bytes = bigIntToBytes(value, endian: Endian.big);
     expect(bytes, equals(Uint8List.fromList([0x01, 0x02, 0x03, 0x04])));
     value = BigInt.from(0x01);
-    bytes = bigIntToBytes(value, minLength: 4);
+    bytes = bigIntToBytes(value, minLength: 4, endian: Endian.big);
     expect(bytes, equals(Uint8List.fromList([0x00, 0x00, 0x00, 0x01])));
-    expect(() => bigIntToBytes(value, minLength: -1), throwsArgumentError);
-    expect(() => bigIntToBytes(BigInt.from(-1)), throwsArgumentError);
     expect(
-      bigIntToBytes(BigInt.from(0x00000004)),
+      bigIntToBytes(BigInt.from(0x00000004), endian: Endian.big),
       equals(Uint8List.fromList([0x04])),
     );
+    // little endian
+    value = BigInt.from(0x01020304);
+    bytes = bigIntToBytes(value, endian: Endian.little);
+    expect(bytes, equals(Uint8List.fromList([0x04, 0x03, 0x02, 0x01])));
+    value = BigInt.from(0x01);
+    bytes = bigIntToBytes(value, minLength: 4, endian: Endian.little);
+    expect(bytes, equals(Uint8List.fromList([0x01, 0x00, 0x00, 0x00])));
+    expect(
+      bigIntToBytes(BigInt.from(0x00000004), endian: Endian.little),
+      equals(Uint8List.fromList([0x04])),
+    );
+    // bad input
+    expect(() => bigIntToBytes(value, minLength: -1), throwsArgumentError);
+    expect(() => bigIntToBytes(BigInt.from(-1)), throwsArgumentError);
   });
   test('listEquals() compares two lists for equality', () {
     var list1 = [1, 2, 3];

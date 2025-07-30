@@ -18,6 +18,7 @@ export 'src/pbkdf2.dart';
 export 'src/ripemd160.dart';
 export 'src/sha256.dart';
 export 'src/sha512.dart';
+export 'src/siphash.dart';
 
 // p2p
 export 'src/node.dart';
