@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:logging/logging.dart';
@@ -6,44 +5,10 @@ import 'package:logging/logging.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'block.dart';
-import 'blockfilter.dart';
+import 'block_filter.dart';
+import 'chain_store.dart';
 
 final _log = Logger('Chain');
-
-abstract class Node<Self extends Node<Self>> {
-  Self? previous;
-  Node({this.previous});
-}
-
-class ChainEntry extends Node<ChainEntry> {
-  int height;
-  BlockHeader header;
-  BigInt work;
-  BigInt chainWork;
-  int timeCreated = DateTime.now().millisecondsSinceEpoch;
-  ChainEntry({
-    required this.height,
-    required this.header,
-    required this.work,
-    required this.chainWork,
-    super.previous,
-  });
-}
-
-class CompactFilterEntry extends Node<CompactFilterEntry> {
-  int height;
-  Uint8List header;
-  CompactFilterEntry({
-    required this.height,
-    required this.header,
-    super.previous,
-  });
-}
-
-enum ChainStatus {
-  blockHeaderSync, // syncing block headers from peers
-  active, // activated chain, read/write operations allowed
-}
 
 enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 
@@ -55,23 +20,27 @@ class ChainManager {
   static const int maxReorgDepth = 50;
 
   final Network network;
-  late ChainStatus _status;
-  final String _blockHeadersFilePath;
+  bool _activeChain = false;
+  bool _activeFilterChain = false;
   final bool verbose;
   late final BlockHeader _genesisBlockHeader;
+  late final Uint8List _genesisBlockFilterHeader;
   final Map<int, Uint8List> _blockHeaderHeightIndex = {};
   // block headers
   late ChainEntry _bestChainHead;
   final List<ChainEntry> _chainHeads = [];
   ChainEntry? _fileChainHead;
+  final BlockHeaderStore _blockHeaderStore;
   // compact filter headers
-  late CompactFilterEntry _bestCompactFilterHead;
-  //CompactFilterEntry? _fileCompactFilterHead; //TODO: implement file storage for compact filters
+  late BlockFilterHeaderEntry _bestBlockFilterHead;
+  BlockFilterHeaderEntry? _fileBlockFilterHead;
+  final BlockFilterHeaderStore _blockFilterHeaderStore;
 
   // public getters
-  ChainStatus get status => _status;
+  bool get activeChain => _activeChain;
+  bool get activeFilterChain => _activeFilterChain;
   ChainEntry get bestChainHead => _bestChainHead;
-  CompactFilterEntry get bestCompactFilterHead => _bestCompactFilterHead;
+  BlockFilterHeaderEntry get bestBlockFilterHead => _bestBlockFilterHead;
   List<ChainEntry> get chainHeads => _chainHeads;
   List<Uint8List> get recentBlockHeadersHashes {
     return _blockHeadersTake(
@@ -85,14 +54,24 @@ class ChainManager {
   ChainManager({
     required this.network,
     required String blockHeadersFilePath,
+    required String blockFilterHeadersFilePath,
     this.verbose = false,
-  }) : _blockHeadersFilePath = blockHeadersFilePath {
-    _status = ChainStatus.blockHeaderSync;
+  }) : _blockHeaderStore = BlockHeaderStore(blockHeadersFilePath),
+       _blockFilterHeaderStore = BlockFilterHeaderStore(
+         blockFilterHeadersFilePath,
+       ) {
+    // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
+    final genesisFilter = BasicBlockFilter(block: Block.genesisBlock(network));
+    _genesisBlockFilterHeader = BasicBlockFilter.filterHeader(
+      genesisFilter.filterHash,
+      BasicBlockFilter.genesisPreviousHeader,
+    );
+    // init best heads
     _bestChainHead = _initBestHeader(network);
     _updateBlockHeaderHeightIndex();
     _chainHeads.add(_bestChainHead);
-    _bestCompactFilterHead = _initBestCompactFilterHead(network);
+    _bestBlockFilterHead = _initBestCompactFilterHeaderHead(network);
   }
 
   BigInt _minumumChainWork(Network network) {
@@ -112,11 +91,10 @@ class ChainManager {
 
   ChainEntry _initBestHeader(Network network) {
     // check if the header file exists and is not empty
-    if (File(_blockHeadersFilePath).existsSync() &&
-        File(_blockHeadersFilePath).lengthSync() > 0) {
-      final headers = _blockHeadersFileRead();
+    if (_blockHeaderStore.exists() && !_blockHeaderStore.empty()) {
+      final headers = _blockHeaderStore.read();
       if (headers.isNotEmpty) {
-        if (_compareHashes(headers.first.hash(), _genesisBlockHeader.hash())) {
+        if (compareHashes(headers.first.hash(), _genesisBlockHeader.hash())) {
           ChainEntry? previous;
           ChainEntry? chainHead;
           for (final header in headers) {
@@ -135,66 +113,34 @@ class ChainManager {
     return _makeChainEntry(_genesisBlockHeader, null);
   }
 
-  CompactFilterEntry _initBestCompactFilterHead(Network network) {
-    // TODO: check if the compact filter headers file exists and is not empty
-
-    // if no headers file or mismatch, return zero entry for genesis block
-    final genesisBlock = Block.genesisBlock(network);
-    final genesisFilter = BasicBlockFilter(block: genesisBlock);
-    final header = BasicBlockFilter.filterHeader(
-      genesisFilter.filterHash,
-      BasicBlockFilter.genesisPreviousHeader,
-    );
-    return _makeCompactFilterEntry(header, null);
-  }
-
-  bool _compareHashes(Uint8List hash1, Uint8List hash2) {
-    if (hash1.length != hash2.length) {
-      return false;
-    }
-    for (int i = 0; i < hash1.length; i++) {
-      if (hash1[i] != hash2[i]) {
-        return false;
+  BlockFilterHeaderEntry _initBestCompactFilterHeaderHead(Network network) {
+    // check if the compact filter headers file exists and is not empty
+    if (_blockFilterHeaderStore.exists() && !_blockFilterHeaderStore.empty()) {
+      final headers = _blockFilterHeaderStore.read();
+      if (headers.isNotEmpty) {
+        if (compareHashes(headers.first, _genesisBlockFilterHeader)) {
+          BlockFilterHeaderEntry? previous;
+          BlockFilterHeaderEntry? head;
+          for (final header in headers) {
+            head = _makeBlockFilterHeaderEntry(header, previous);
+            previous = head;
+          }
+          _fileBlockFilterHead = head;
+          return head!;
+        }
+        _log.warning(
+          'Genesis block filter header hash mismatch: ${headers.first.toHex()} != ${_genesisBlockFilterHeader.toHex()}',
+        );
       }
     }
-    return true;
-  }
-
-  List<BlockHeader> _blockHeadersFileRead() {
-    final headersFile = File(_blockHeadersFilePath);
-    if (!headersFile.existsSync()) {
-      throw StateError(
-        'Block headers file does not exist: $_blockHeadersFilePath',
-      );
-    }
-    // read the headers CSV line by line
-    final headers = <BlockHeader>[];
-    headersFile.readAsLinesSync().forEach((line) {
-      // skip header line
-      if (line.startsWith('height,timestamp,hash,header')) {
-        return;
-      }
-      final fields = line.split(',');
-      if (fields.length == 4) {
-        //final height = int.parse(fields[0]);
-        //final timestamp = int.parse(fields[1]);
-        //final hash = Uint8List.fromList(fields[2].toBytes());
-        final header = BlockHeader.fromBytes(fields[3].toBytes());
-        headers.add(header);
-      }
-    });
-    _log.info('Loaded ${headers.length} block headers from file');
-    return headers;
-  }
-
-  String _headerFileEntry(ChainEntry entry) {
-    return '${entry.height.toString().padLeft(6, '0')},${DateTime.now().millisecondsSinceEpoch ~/ 1000},${headerHashNice(entry.header.hash())},${entry.header.toBytes().toHex()}';
+    // if no headers file or mismatch, start with genesis block filter header
+    return _makeBlockFilterHeaderEntry(_genesisBlockFilterHeader, null);
   }
 
   void _blockHeadersFileWrite() {
-    if (status != ChainStatus.active) {
+    if (!_activeChain) {
       throw StateError(
-        'Cannot write block headers to file in non-active chain status: $status',
+        'Cannot write block headers to file in non-active chain',
       );
     }
     final chainEntries = _chainEntryListFromHead(_bestChainHead, null);
@@ -206,90 +152,24 @@ class ChainManager {
         'First entry must be the genesis block when writing entire headers file',
       );
     }
-    // convert block headers to CSV format
-    final csvData = StringBuffer();
-    csvData.writeln('height,timestamp,hash,header');
-    for (final entry in chainEntries) {
-      csvData.writeln(_headerFileEntry(entry));
-    }
-    // write to file
-    final headersFile = File(_blockHeadersFilePath);
-    if (headersFile.existsSync()) {
-      throw StateError(
-        'Block headers file already exists: $_blockHeadersFilePath.',
-      );
-    }
-    headersFile.createSync(recursive: true);
-    headersFile.writeAsStringSync(csvData.toString());
-    if (verbose) {
-      _log.info('Block headers written to file: $_blockHeadersFilePath');
-    }
+    _blockHeaderStore.write(chainEntries);
     // update the file chain head
     _fileChainHead = _bestChainHead;
   }
 
   void _blockHeadersFileAppend(List<ChainEntry> chainEntries) {
-    if (status != ChainStatus.active) {
+    if (!_activeChain) {
       throw StateError(
-        'Cannot write block headers to file in non-active chain status: $status',
+        'Cannot write block headers to file in non-active chain',
       );
     }
-    if (chainEntries.isEmpty) {
-      if (verbose) {
-        _log.info('No new block headers to append to file');
-      }
-      return;
-    }
-    if (chainEntries.first.previous == null) {
-      throw StateError(
-        'First entry should not be the genesis block when appending to headers file',
-      );
-    }
-    // convert block headers to CSV format
-    final csvData = StringBuffer();
-    for (final entry in chainEntries) {
-      csvData.writeln(_headerFileEntry(entry));
-    }
-    // append to file
-    final headersFile = File(_blockHeadersFilePath);
-    if (!headersFile.existsSync()) {
-      throw StateError(
-        'Block headers file does not exist: $_blockHeadersFilePath',
-      );
-    }
-    // check the last height in the file
-    final lines = headersFile.readAsLinesSync();
-    if (lines.isEmpty) {
-      throw StateError('Headers file is empty, cannot append new entries');
-    }
-    final lastHeight = int.tryParse(lines.last.split(',')[0]);
-    if (lastHeight == null) {
-      throw StateError('Invalid last height in headers file');
-    }
-    if (lastHeight != chainEntries.first.previous?.height) {
-      throw StateError(
-        'Last height in file ($lastHeight) does not match first height in new entries (${chainEntries.first.height})',
-      );
-    }
-    // write new entries to the file
-    headersFile.writeAsStringSync(csvData.toString(), mode: FileMode.append);
-    if (verbose) {
-      _log.info('Block headers appended to file: $_blockHeadersFilePath');
-    }
+    _blockHeaderStore.append(chainEntries);
     // update the file chain head
     _fileChainHead = _bestChainHead;
   }
 
   void _blockHeadersFileDelete() {
-    final headersFile = File(_blockHeadersFilePath);
-    if (headersFile.existsSync()) {
-      headersFile.deleteSync();
-      if (verbose) {
-        _log.info('Block headers file deleted: $_blockHeadersFilePath');
-      }
-    } else {
-      _log.warning('Block headers file does not exist: $_blockHeadersFilePath');
-    }
+    _blockHeaderStore.delete();
     // reset the file chain head
     _fileChainHead = null;
   }
@@ -314,6 +194,67 @@ class ChainManager {
         _blockHeadersFileWrite();
       } else {
         _blockHeadersFileAppend(chainEntries);
+      }
+    }
+  }
+
+  void _blockFilterHeadersFileWrite() {
+    if (!_activeFilterChain) {
+      throw StateError(
+        'Cannot write block filter headers to file in non-active filter chain',
+      );
+    }
+    final entries = _filterEntryListFromHead(_bestBlockFilterHead, null);
+    if (entries.isEmpty) {
+      throw StateError('Cannot write block filter headers without entries');
+    }
+    if (entries.first.previous != null) {
+      throw StateError(
+        'First entry must be the genesis block when writing entire filter headers file',
+      );
+    }
+    _blockFilterHeaderStore.write(entries);
+    // update the file chain head
+    _fileBlockFilterHead = _bestBlockFilterHead;
+  }
+
+  void _blockFilterHeadersFileAppend(List<BlockFilterHeaderEntry> entries) {
+    if (!_activeFilterChain) {
+      throw StateError(
+        'Cannot write block filter headers to file in non-active filter chain',
+      );
+    }
+    _blockFilterHeaderStore.append(entries);
+    // update the file chain head
+    _fileBlockFilterHead = _bestBlockFilterHead;
+  }
+
+  void _blockFilterHeadersFileDelete() {
+    _blockFilterHeaderStore.delete();
+    // reset the file chain head
+    _fileBlockFilterHead = null;
+  }
+
+  void _blockFilterHeadersFileWriteOrAppend() {
+    // if no block headers have been read from the file yet,
+    // write the entire headers file
+    if (_fileBlockFilterHead == null) {
+      _blockFilterHeadersFileWrite();
+    } else {
+      // find the list of chain entries from the best chain head to the file chain head
+      // this *should* not be empty because we are called after adding new headers
+      final chainEntries = _filterEntryListFromHead(
+        _bestBlockFilterHead,
+        _fileBlockFilterHead,
+      );
+      // if the list is empty or contains the genesis block,
+      // it means we have reorged past the file chain head
+      // so we need to rewrite the entire headers file (should happen very infrequently)
+      if (chainEntries.isEmpty || chainEntries.first.height == 0) {
+        _blockFilterHeadersFileDelete();
+        _blockFilterHeadersFileWrite();
+      } else {
+        _blockFilterHeadersFileAppend(chainEntries);
       }
     }
   }
@@ -356,11 +297,11 @@ class ChainManager {
     );
   }
 
-  CompactFilterEntry _makeCompactFilterEntry(
+  BlockFilterHeaderEntry _makeBlockFilterHeaderEntry(
     Uint8List header,
-    CompactFilterEntry? previous,
+    BlockFilterHeaderEntry? previous,
   ) {
-    return CompactFilterEntry(
+    return BlockFilterHeaderEntry(
       height: (previous?.height ?? -1) + 1,
       header: header,
       previous: previous,
@@ -374,7 +315,7 @@ class ChainManager {
       );
     }
     // check if the header builds on the best chainhead (should be most common case)
-    if (_compareHashes(
+    if (compareHashes(
       _bestChainHead.header.hash(),
       header.previousBlockHeaderHash,
     )) {
@@ -382,7 +323,7 @@ class ChainManager {
     }
     // check if the header builds on one of the chainheads
     for (final chainHead in _chainHeads) {
-      if (_compareHashes(
+      if (compareHashes(
         chainHead.header.hash(),
         header.previousBlockHeaderHash,
       )) {
@@ -399,10 +340,10 @@ class ChainManager {
           current.height >= 0 &&
           current.height >= initialHeight - maxReorgDepth) {
         final currentHash = current.header.hash();
-        if (_compareHashes(currentHash, headerHash)) {
+        if (compareHashes(currentHash, headerHash)) {
           return null; // already in the chain, no new chainhead found
         }
-        if (_compareHashes(currentHash, header.previousBlockHeaderHash)) {
+        if (compareHashes(currentHash, header.previousBlockHeaderHash)) {
           return _makeChainEntry(header, current);
         }
         current = current.previous;
@@ -541,7 +482,7 @@ class ChainManager {
     // 1) check if the new chainhead can replace one of the existing heads
     var replacedHead = false;
     for (final chainHead in _chainHeads) {
-      if (_compareHashes(
+      if (compareHashes(
         chainHead.header.hash(),
         newChainHead.header.previousBlockHeaderHash,
       )) {
@@ -608,10 +549,26 @@ class ChainManager {
     // collect all chain entries from a chainhead up to initialChainHead (if provided)
     while (current != null &&
         (initialChainHead == null ||
-            !_compareHashes(
+            !compareHashes(
               current.header.hash(),
               initialChainHead.header.hash(),
             ))) {
+      chainEntries.add(current);
+      current = current.previous;
+    }
+    return chainEntries.reversed.toList();
+  }
+
+  List<BlockFilterHeaderEntry> _filterEntryListFromHead(
+    BlockFilterHeaderEntry chainHead,
+    BlockFilterHeaderEntry? initialChainHead,
+  ) {
+    final chainEntries = <BlockFilterHeaderEntry>[];
+    BlockFilterHeaderEntry? current = chainHead;
+    // collect all chain entries from a chainhead up to initialChainHead (if provided)
+    while (current != null &&
+        (initialChainHead == null ||
+            !compareHashes(current.header, initialChainHead.header))) {
       chainEntries.add(current);
       current = current.previous;
     }
@@ -710,9 +667,9 @@ class ChainManager {
       );
     }
     // if the chain is active, write the headers to file
-    if (status == ChainStatus.active) {
+    if (_activeChain) {
       // write the headers to file
-      if (!_compareHashes(
+      if (!compareHashes(
         _bestChainHead.header.hash(),
         initialBest.header.hash(),
       )) {
@@ -729,10 +686,11 @@ class ChainManager {
     List<Uint8List> filterHashes,
     Uint8List stopHash,
   ) {
+    final initialBest = _bestBlockFilterHead;
     // check previous filter hash
-    if (!_compareHashes(_bestCompactFilterHead.header, previousFilterHash)) {
+    if (!compareHashes(_bestBlockFilterHead.header, previousFilterHash)) {
       _log.warning(
-        'Received compact filter header with invalid previous header: ${headerHashNice(_bestCompactFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
+        'Received compact filter header with invalid previous header: ${headerHashNice(_bestBlockFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
       );
       return AddCompactFilterHeadersResult
           .invalidFilterHeader; // abort adding compact filter headers
@@ -741,15 +699,22 @@ class ChainManager {
       // create header
       final header = BasicBlockFilter.filterHeader(
         filterHash,
-        _bestCompactFilterHead.header,
+        _bestBlockFilterHead.header,
       );
-      // create new compact filter entry
-      final newCompactFilterHead = _makeCompactFilterEntry(
+      // create new block filter entry
+      final newBlockFilterHead = _makeBlockFilterHeaderEntry(
         header,
-        _bestCompactFilterHead,
+        _bestBlockFilterHead,
       );
-      // update the best compact filter head
-      _bestCompactFilterHead = newCompactFilterHead;
+      // update the best block filter head
+      _bestBlockFilterHead = newBlockFilterHead;
+    }
+    // if the chain is active, write the headers to file
+    if (_activeFilterChain) {
+      // write the headers to file
+      if (!compareHashes(_bestBlockFilterHead.header, initialBest.header)) {
+        _blockFilterHeadersFileWriteOrAppend();
+      }
     }
     return AddCompactFilterHeadersResult.success;
   }
@@ -766,8 +731,8 @@ class ChainManager {
   }
 
   void activate() {
-    if (status != ChainStatus.blockHeaderSync) {
-      throw StateError('Cannot activate chain in status: $status');
+    if (_activeChain) {
+      throw StateError('Cannot activate already activated chain');
     }
     if (verbose) {
       _log.info(
@@ -776,10 +741,10 @@ class ChainManager {
     }
     // set the status to active
     // this allows writing block headers to file
-    _status = ChainStatus.active;
+    _activeChain = true;
     // write the best chain head to file (if it is not already written)
     if (_fileChainHead == null ||
-        !_compareHashes(
+        !compareHashes(
           _fileChainHead!.header.hash(),
           _bestChainHead.header.hash(),
         )) {
@@ -787,11 +752,44 @@ class ChainManager {
     }
   }
 
-  void sync() {
-    if (status != ChainStatus.active) {
-      throw StateError('Cannot sync chain in status: $status');
+  void deactivate() {
+    if (!_activeChain) {
+      throw StateError('Cannot deactivate already deactivated chain');
     }
-    // set status back to header sync
-    _status = ChainStatus.blockHeaderSync;
+    _activeChain = false;
+  }
+
+  bool hasValidFilterChain() {
+    //TODO: recreate filter and check if it agrees with the peer
+    return true;
+  }
+
+  void activateFilterChain() {
+    if (_activeFilterChain) {
+      throw StateError('Cannot activate already activated filter chain');
+    }
+    if (verbose) {
+      _log.info(
+        'Activating filter chain with best header: ${headerHashNice(_bestBlockFilterHead.header)}',
+      );
+    }
+    // set the status to active
+    // this allows writing block headers to file
+    _activeFilterChain = true;
+    // write the best chain head to file (if it is not already written)
+    if (_fileBlockFilterHead == null ||
+        !compareHashes(
+          _fileBlockFilterHead!.header,
+          _bestBlockFilterHead.header,
+        )) {
+      _blockFilterHeadersFileWriteOrAppend();
+    }
+  }
+
+  void deactivateFilterChain() {
+    if (!_activeFilterChain) {
+      throw StateError('Cannot deactivate already deactivated filter chain');
+    }
+    _activeFilterChain = false;
   }
 }

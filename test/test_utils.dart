@@ -79,6 +79,15 @@ void main() {
     expect(listEquals(null, list1), isFalse);
     expect(listEquals(list1, null), isFalse);
   });
+  test('compareHashes() compares two byte arrays for equality', () {
+    var hash1 = hexToBytes('1234567890abcdef');
+    var hash2 = hexToBytes('1234567890abcdef');
+    var hash3 = hexToBytes('fedcba0987654321');
+    var hash4 = hexToBytes('00');
+    expect(compareHashes(hash1, hash2), isTrue);
+    expect(compareHashes(hash1, hash3), isFalse);
+    expect(compareHashes(hash1, hash4), isFalse);
+  });
   test('hash256() computes double SHA-256 hash', () {
     expect(
       hash256(hexToBytes('')),

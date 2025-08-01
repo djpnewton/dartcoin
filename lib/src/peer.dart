@@ -5,7 +5,7 @@ import 'package:logging/logging.dart';
 
 import 'p2p_messages.dart';
 import 'block.dart';
-import 'blockfilter.dart';
+import 'block_filter.dart';
 import 'chain.dart';
 import 'utils.dart';
 import 'common.dart';
@@ -472,10 +472,23 @@ class Peer {
         message.stopHash,
       )) {
         case AddCompactFilterHeadersResult.success:
-          _sendGetCfHeaders(socket, chainManager);
           break;
         case AddCompactFilterHeadersResult.invalidFilterHeader:
+          _log.warning(
+            'Failed to add invalid filter headers: ${message.filterHashes.length}',
+          );
           break;
+      }
+      if (compareHashes(
+        message.stopHash,
+        chainManager.bestChainHead.header.hash(),
+      )) {
+        final prev = _status;
+        _status = PeerStatus.compactFilterHeaderSynced;
+        _onStatusChange(this, _status, prev);
+      } else {
+        // request next batch of block filter headers
+        _sendGetCfHeaders(socket, chainManager);
       }
     }
   }
@@ -525,7 +538,7 @@ class Peer {
   }
 
   void _sendGetCfHeaders(Socket socket, ChainManager chainManager) {
-    final startHeight = chainManager.bestCompactFilterHead.height + 1;
+    final startHeight = chainManager.bestBlockFilterHead.height + 1;
     var endHeight = startHeight + 1999;
     endHeight = endHeight > chainManager.bestChainHead.height
         ? chainManager.bestChainHead.height
@@ -563,10 +576,22 @@ class Peer {
       return;
     }
     final socket = _socket!;
-    //  start requesting compact filter headers
-    final prev = _status;
-    _status = PeerStatus.compactFilterHeaderSyncing;
-    _onStatusChange(this, _status, prev);
-    _sendGetCfHeaders(socket, chainManager);
+    if (chainManager.bestBlockFilterHead.height <
+        chainManager.bestChainHead.height) {
+      //  start requesting compact filter headers
+      final prev = _status;
+      _status = PeerStatus.compactFilterHeaderSyncing;
+      _onStatusChange(this, _status, prev);
+      _sendGetCfHeaders(socket, chainManager);
+    } else {
+      if (verbose) {
+        _log.info(
+          'Compact filter headers are already synced for peer: $ip:$port',
+        );
+      }
+      final prev = _status;
+      _status = PeerStatus.compactFilterHeaderSynced;
+      _onStatusChange(this, _status, prev);
+    }
   }
 }

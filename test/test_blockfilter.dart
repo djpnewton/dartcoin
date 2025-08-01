@@ -2,7 +2,7 @@
 
 import 'package:test/test.dart';
 
-import '../lib/src/blockfilter.dart';
+import '../lib/src/block_filter.dart';
 import '../lib/src/block.dart';
 import '../lib/src/utils.dart';
 import '../lib/src/common.dart';
