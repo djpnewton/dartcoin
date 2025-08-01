@@ -56,7 +56,7 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(network: Network.regtest, dataDir: nodeDataDir);
+    node = Node(network: Network.regtest, dataDir: nodeDataDir, verbose: true, syncCompactFilterHeaders: false);
   });
   tearDown(() async {
     // shutdown the node
@@ -90,7 +90,7 @@ void main() {
     var hs = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.headersSynced,
+      PeerStatus.blockHeadersSynced,
     );
     expect(hs, isTrue);
     // connect the second regtest process to the first

@@ -63,7 +63,7 @@ class SipHashState {
 
 /// Computes SipHash-2-4 for the given input and key.
 /// The key should be 16-bytes. The output is a 8-byte hash.
-Uint8List siphash(Uint8List input, Uint8List key) {
+BigInt siphash(Uint8List input, Uint8List key) {
   if (key.length != 16) {
     throw ArgumentError('Key must be 16 bytes long');
   }
@@ -133,9 +133,13 @@ Uint8List siphash(Uint8List input, Uint8List key) {
     state.sipRound();
   }
 
-  final out = bigIntToBytes(
-    (state.v0 ^ state.v1 ^ state.v2 ^ state.v3).toUnsigned(64),
+  return (state.v0 ^ state.v1 ^ state.v2 ^ state.v3).toUnsigned(64);
+}
+
+Uint8List siphashBytes(Uint8List input, Uint8List key) {
+  return bigIntToBytes(
+    siphash(input, key),
+    minLength: 8,
     endian: Endian.little,
   );
-  return out;
 }

@@ -16,9 +16,16 @@ class Node {
   late final String _dataDir;
   late final ChainManager _chainManager;
   final bool verbose;
-  bool _shuttingDown = false;
+  final bool syncBlockHeaders;
+  final bool syncCompactFilterHeaders;
 
-  Node({required this.network, String? dataDir, this.verbose = false}) {
+  Node({
+    required this.network,
+    String? dataDir,
+    this.verbose = false,
+    this.syncBlockHeaders = true,
+    this.syncCompactFilterHeaders = true,
+  }) {
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
     // initialize the chain manager
@@ -66,27 +73,23 @@ class Node {
       case PeerStatus.connected:
         break;
       case PeerStatus.handshakeComplete:
-        if (reason == PeerStatusChangeReason.invalidHeader) {
+        if (reason == PeerStatusChangeReason.invalidBlockHeader) {
           _log.warning(
             'Invalid headers received from peer ${peer.ip}:${peer.port}',
           );
-          if (!_shuttingDown) {
-            peer.disconnect();
-            _peers.remove(peer);
-          }
+          peer.disconnect();
+          _peers.remove(peer);
           // TODO: connect to another peer
           return;
-        } else if (prevStatus == PeerStatus.headersSyncing &&
+        } else if (prevStatus == PeerStatus.blockHeadersSyncing &&
             reason == PeerStatusChangeReason.noChainHead) {
           if (verbose) {
             _log.info(
               'Peer ${peer.ip}:${peer.port} headers syncing, but no chain head found',
             );
           }
-          if (!_shuttingDown) {
-            peer.disconnect();
-            _peers.remove(peer);
-          }
+          peer.disconnect();
+          _peers.remove(peer);
           // TODO: connect to another peer
           return;
         }
@@ -95,11 +98,13 @@ class Node {
           _chainManager.sync();
         }
         // Start syncing headers
-        peer.sync(_chainManager);
+        if (syncBlockHeaders) {
+          peer.syncBlockHeaders(_chainManager);
+        }
         break;
-      case PeerStatus.headersSyncing:
+      case PeerStatus.blockHeadersSyncing:
         break;
-      case PeerStatus.headersSynced:
+      case PeerStatus.blockHeadersSynced:
         // check if sufficient chain work
         if (_chainManager.hasMinimumChainWork()) {
           if (verbose) {
@@ -109,25 +114,29 @@ class Node {
           }
           // activate chain (and write to disk)
           _chainManager.activate();
+          // start syncing compact filters
+          if (syncCompactFilterHeaders) {
+            peer.syncCompactFilterHeaders(_chainManager);
+          }
           // TODO:
           //  - add new peers and wait for txs/blocks
         } else {
           _log.warning(
             'Insufficient chain work from peer headers ${peer.ip}:${peer.port}',
           );
-          if (!_shuttingDown) {
-            peer.disconnect();
-            _peers.remove(peer);
-          }
+          peer.disconnect();
+          _peers.remove(peer);
           // TODO:
           //  - connect to another peer
           //  - reset the chain
         }
         break;
+      case PeerStatus.compactFilterHeaderSyncing:
+        break;
+      case PeerStatus.compactFilterHeaderSynced:
+        break;
       case PeerStatus.disconnected:
-        if (!_shuttingDown) {
-          _peers.remove(peer);
-        }
+        _peers.remove(peer);
         break;
       case PeerStatus.connecting:
         break;
@@ -147,15 +156,13 @@ class Node {
   }
 
   void shutdown() {
-    _shuttingDown = true;
     if (verbose) {
       _log.info('Shutting down node...');
     }
-    for (final peer in _peers) {
+    for (final peer in _peers.toList()) {
       peer.disconnect();
     }
     _peers.clear();
-    _shuttingDown = false;
     // TODO: in the future, we might want to save the chain state
     //  and save peers to disk
   }
@@ -166,6 +173,14 @@ class Node {
 
   String bestBlockHash() {
     return headerHashNice(_chainManager.bestChainHead.header.hash());
+  }
+
+  String? blockHashForHeight(int height) {
+    final hash = _chainManager.blockHashForHeight(height);
+    if (hash == null) {
+      return null; // height out of range or not indexed
+    }
+    return headerHashNice(hash);
   }
 
   List<ChainEntry> chainHeads() {

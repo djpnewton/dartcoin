@@ -116,6 +116,8 @@ class Block {
 
   Block({required this.header, required this.transactions});
 
+  Uint8List hash() => hash256(toBytes());
+
   Uint8List toBytes() {
     final buffer = BytesBuilder();
     buffer.add(header.toBytes());

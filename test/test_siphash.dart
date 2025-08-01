@@ -12,31 +12,31 @@ void main() {
   test('invalid input', () {
     // key length too short
     expect(
-      () => siphash(utf8.encode(''), utf8.encode('123456789012345')),
+      () => siphashBytes(utf8.encode(''), utf8.encode('123456789012345')),
       throwsArgumentError,
     );
     // key length too long
     expect(
-      () => siphash(utf8.encode(''), utf8.encode('12345678901234567')),
+      () => siphashBytes(utf8.encode(''), utf8.encode('12345678901234567')),
       throwsArgumentError,
     );
   });
   test('values from https://github.com/majek/pysiphash', () {
     final key = '1234567890123456';
     expect(
-      siphash(utf8.encode(''), utf8.encode(key)),
+      siphashBytes(utf8.encode(''), utf8.encode(key)),
       equals(hexToBytes('7f32f18a1dc235af')),
     );
     expect(
-      siphash(utf8.encode('hello'), utf8.encode(key)),
+      siphashBytes(utf8.encode('hello'), utf8.encode(key)),
       equals(hexToBytes('0f2d12c3c33d66f2')),
     );
     expect(
-      siphash(utf8.encode('hello world'), utf8.encode(key)),
+      siphashBytes(utf8.encode('hello world'), utf8.encode(key)),
       equals(hexToBytes('4a38c614b08e451f')),
     );
     expect(
-      siphash(
+      siphashBytes(
         utf8.encode('the quick brown fox jumped over the lazy dog'),
         utf8.encode(key),
       ),
@@ -70,7 +70,7 @@ void main() {
     );
     for (int i = 0; i < testVectors.length; i++) {
       final expected = hexToBytes(testVectors[i]);
-      final result = siphash(input.sublist(0, i), key);
+      final result = siphashBytes(input.sublist(0, i), key);
       expect(result, equals(expected), reason: 'Failed on test vector $i');
     }
   });

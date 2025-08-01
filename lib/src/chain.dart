@@ -6,6 +6,7 @@ import 'package:logging/logging.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'block.dart';
+import 'blockfilter.dart';
 
 final _log = Logger('Chain');
 
@@ -29,12 +30,24 @@ class ChainEntry extends Node<ChainEntry> {
   });
 }
 
+class CompactFilterEntry extends Node<CompactFilterEntry> {
+  int height;
+  Uint8List header;
+  CompactFilterEntry({
+    required this.height,
+    required this.header,
+    super.previous,
+  });
+}
+
 enum ChainStatus {
-  headerSync, // syncing headers from peers
+  blockHeaderSync, // syncing block headers from peers
   active, // activated chain, read/write operations allowed
 }
 
-enum AddHeadersResult { success, invalidHeader, noChainHead }
+enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
+
+enum AddCompactFilterHeadersResult { success, invalidFilterHeader }
 
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
@@ -46,23 +59,40 @@ class ChainManager {
   final String _blockHeadersFilePath;
   final bool verbose;
   late final BlockHeader _genesisBlockHeader;
+  final Map<int, Uint8List> _blockHeaderHeightIndex = {};
+  // block headers
   late ChainEntry _bestChainHead;
   final List<ChainEntry> _chainHeads = [];
   ChainEntry? _fileChainHead;
+  // compact filter headers
+  late CompactFilterEntry _bestCompactFilterHead;
+  //CompactFilterEntry? _fileCompactFilterHead; //TODO: implement file storage for compact filters
 
+  // public getters
   ChainStatus get status => _status;
   ChainEntry get bestChainHead => _bestChainHead;
+  CompactFilterEntry get bestCompactFilterHead => _bestCompactFilterHead;
   List<ChainEntry> get chainHeads => _chainHeads;
+  List<Uint8List> get recentBlockHeadersHashes {
+    return _blockHeadersTake(
+      _bestChainHead,
+      _bestChainHead.height + 1 < maxReorgDepth
+          ? _bestChainHead.height + 1
+          : maxReorgDepth,
+    ).map((header) => header.hash()).toList();
+  }
 
   ChainManager({
     required this.network,
     required String blockHeadersFilePath,
     this.verbose = false,
   }) : _blockHeadersFilePath = blockHeadersFilePath {
-    _status = ChainStatus.headerSync;
+    _status = ChainStatus.blockHeaderSync;
     _genesisBlockHeader = Block.genesisBlock(network).header;
     _bestChainHead = _initBestHeader(network);
+    _updateBlockHeaderHeightIndex();
     _chainHeads.add(_bestChainHead);
+    _bestCompactFilterHead = _initBestCompactFilterHead(network);
   }
 
   BigInt _minumumChainWork(Network network) {
@@ -103,6 +133,19 @@ class ChainManager {
     }
     // if no headers file or mismatch, start with genesis block header
     return _makeChainEntry(_genesisBlockHeader, null);
+  }
+
+  CompactFilterEntry _initBestCompactFilterHead(Network network) {
+    // TODO: check if the compact filter headers file exists and is not empty
+
+    // if no headers file or mismatch, return zero entry for genesis block
+    final genesisBlock = Block.genesisBlock(network);
+    final genesisFilter = BasicBlockFilter(block: genesisBlock);
+    final header = BasicBlockFilter.filterHeader(
+      genesisFilter.filterHash,
+      BasicBlockFilter.genesisPreviousHeader,
+    );
+    return _makeCompactFilterEntry(header, null);
   }
 
   bool _compareHashes(Uint8List hash1, Uint8List hash2) {
@@ -302,15 +345,6 @@ class ChainManager {
     return current.header;
   }
 
-  List<Uint8List> get recentBlockHeadersHashes {
-    return _blockHeadersTake(
-      _bestChainHead,
-      _bestChainHead.height + 1 < maxReorgDepth
-          ? _bestChainHead.height + 1
-          : maxReorgDepth,
-    ).map((header) => header.hash()).toList();
-  }
-
   ChainEntry _makeChainEntry(BlockHeader header, ChainEntry? previous) {
     final work = header.work();
     return ChainEntry(
@@ -318,6 +352,17 @@ class ChainManager {
       header: header,
       work: work,
       chainWork: (previous?.chainWork ?? BigInt.zero) + work,
+      previous: previous,
+    );
+  }
+
+  CompactFilterEntry _makeCompactFilterEntry(
+    Uint8List header,
+    CompactFilterEntry? previous,
+  ) {
+    return CompactFilterEntry(
+      height: (previous?.height ?? -1) + 1,
+      header: header,
       previous: previous,
     );
   }
@@ -536,6 +581,22 @@ class ChainManager {
       candidates.sort((a, b) => a.timeCreated.compareTo(b.timeCreated));
       _bestChainHead = candidates.first;
     }
+    _updateBlockHeaderHeightIndex();
+  }
+
+  void _updateBlockHeaderHeightIndex() {
+    ChainEntry? current = _bestChainHead;
+    while (current != null) {
+      final hash = current.header.hash();
+      if (_blockHeaderHeightIndex.containsKey(current.height) &&
+          _blockHeaderHeightIndex[current.height] == hash) {
+        // already indexed and index matches chain
+        break;
+      }
+      // add to or update the index
+      _blockHeaderHeightIndex[current.height] = hash;
+      current = current.previous;
+    }
   }
 
   List<ChainEntry> _chainEntryListFromHead(
@@ -564,9 +625,9 @@ class ChainManager {
     );
   }
 
-  AddHeadersResult addHeaders(List<BlockHeader> headers) {
+  AddBlockHeadersResult addBlockHeaders(List<BlockHeader> headers) {
     if (headers.isEmpty) {
-      return AddHeadersResult.success;
+      return AddBlockHeadersResult.success;
     }
     final initialBest = _bestChainHead;
     var headersAdded = 0;
@@ -598,7 +659,7 @@ class ChainManager {
       }
       // check the median time past
       if (!_checkMedianTimePast(newChainHead)) {
-        return AddHeadersResult.invalidHeader; // abort adding headers
+        return AddBlockHeadersResult.invalidBlockHeader; // abort adding headers
       }
       // check testnet4 timewarp rule (bip 94)
       if (network == Network.testnet4) {
@@ -609,7 +670,8 @@ class ChainManager {
             _log.warning(
               'Received header with invalid time: ${newChainHead.header.time}, expected greater then or equal to ${newChainHead.previous!.header.time - maxTimewarp}',
             );
-            return AddHeadersResult.invalidHeader; // abort adding headers
+            return AddBlockHeadersResult
+                .invalidBlockHeader; // abort adding headers
           }
         }
       }
@@ -623,7 +685,7 @@ class ChainManager {
         _log.warning(
           'Received header with different nBits: ${newChainHead.header.nBits.toRadixString(16)}, expected: ${bits.toRadixString(16)}',
         );
-        return AddHeadersResult.invalidHeader; // abort adding headers
+        return AddBlockHeadersResult.invalidBlockHeader; // abort adding headers
       }
       final target = BlockHeader.bitsToTarget(bits);
       final headerWork = bytesToBigInt(headerHashReversed);
@@ -631,7 +693,7 @@ class ChainManager {
         _log.warning(
           'Received header with insufficient work: ${headerHashNice(headerHash)} (needed: ${target.toRadixString(16).padLeft(64, '0')})',
         );
-        return AddHeadersResult.invalidHeader; // abort adding headers
+        return AddBlockHeadersResult.invalidBlockHeader; // abort adding headers
       }
       // update heads
       _updateHeads(newChainHead);
@@ -640,7 +702,7 @@ class ChainManager {
     }
     // if no headers were added, return no chain head found
     if (headersAdded == 0) {
-      return AddHeadersResult.noChainHead;
+      return AddBlockHeadersResult.noChainHead;
     }
     if (verbose) {
       _log.info(
@@ -659,15 +721,52 @@ class ChainManager {
     }
     // clean chainheads
     _cleanHeads();
-    return AddHeadersResult.success;
+    return AddBlockHeadersResult.success;
+  }
+
+  AddCompactFilterHeadersResult addCompactFilterHeaders(
+    Uint8List previousFilterHash,
+    List<Uint8List> filterHashes,
+    Uint8List stopHash,
+  ) {
+    // check previous filter hash
+    if (!_compareHashes(_bestCompactFilterHead.header, previousFilterHash)) {
+      _log.warning(
+        'Received compact filter header with invalid previous header: ${headerHashNice(_bestCompactFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
+      );
+      return AddCompactFilterHeadersResult
+          .invalidFilterHeader; // abort adding compact filter headers
+    }
+    for (final filterHash in filterHashes) {
+      // create header
+      final header = BasicBlockFilter.filterHeader(
+        filterHash,
+        _bestCompactFilterHead.header,
+      );
+      // create new compact filter entry
+      final newCompactFilterHead = _makeCompactFilterEntry(
+        header,
+        _bestCompactFilterHead,
+      );
+      // update the best compact filter head
+      _bestCompactFilterHead = newCompactFilterHead;
+    }
+    return AddCompactFilterHeadersResult.success;
   }
 
   bool hasMinimumChainWork() {
     return _bestChainHead.chainWork >= _minumumChainWork(network);
   }
 
+  Uint8List? blockHashForHeight(int height) {
+    if (height < 0 || !_blockHeaderHeightIndex.containsKey(height)) {
+      return null; // height out of range or not indexed
+    }
+    return _blockHeaderHeightIndex[height];
+  }
+
   void activate() {
-    if (status != ChainStatus.headerSync) {
+    if (status != ChainStatus.blockHeaderSync) {
       throw StateError('Cannot activate chain in status: $status');
     }
     if (verbose) {
@@ -693,6 +792,6 @@ class ChainManager {
       throw StateError('Cannot sync chain in status: $status');
     }
     // set status back to header sync
-    _status = ChainStatus.headerSync;
+    _status = ChainStatus.blockHeaderSync;
   }
 }

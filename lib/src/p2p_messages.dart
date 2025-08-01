@@ -136,6 +136,8 @@ class MessageHeader {
 
 class Message {
   static const version = 70015; // Default protocol version
+  static const nodeCompactFilters =
+      1 << 6; // supports BIP 157 messages for filter type 0x00
 
   Message();
 
@@ -194,6 +196,16 @@ class Message {
           case 'headers':
             return (
               MessageHeaders.fromBytes(result.value.payload),
+              result.value,
+            );
+          case 'getcfheaders':
+            return (
+              MessageGetCfHeaders.fromBytes(result.value.payload),
+              result.value,
+            );
+          case 'cfheaders':
+            return (
+              MessageCfHeaders.fromBytes(result.value.payload),
               result.value,
             );
           //TODO: more message types
@@ -885,5 +897,128 @@ class MessageHeaders extends Message {
       );
     }
     return MessageHeaders(headers: headers);
+  }
+}
+
+class MessageGetCfHeaders extends Message {
+  int filterType;
+  int startHeight;
+  Uint8List stopHash;
+
+  MessageGetCfHeaders({
+    required this.filterType,
+    required this.startHeight,
+    required this.stopHash,
+  }) {
+    if (stopHash.length != 32) {
+      throw ArgumentError('Stop hash must be 32 bytes long');
+    }
+  }
+
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add([filterType]);
+    payload.add(
+      Uint8List(4)
+        ..buffer.asByteData().setUint32(0, startHeight, Endian.little),
+    );
+    payload.add(stopHash);
+    final msgHeader = MessageHeader(
+      command: 'getcfheaders',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
+  }
+
+  factory MessageGetCfHeaders.fromBytes(Uint8List bytes) {
+    if (bytes.length != 37) {
+      throw FormatException(
+        'GetCfHeaders message bytes must be exactly 37 bytes long',
+      );
+    }
+    final filterType = bytes[0];
+    final startHeight = bytes.buffer.asByteData().getUint32(1, Endian.little);
+    final stopHash = bytes.sublist(5, 37);
+    return MessageGetCfHeaders(
+      filterType: filterType,
+      startHeight: startHeight,
+      stopHash: stopHash,
+    );
+  }
+}
+
+class MessageCfHeaders extends Message {
+  int filterType;
+  Uint8List stopHash;
+  Uint8List previousFilterHeader;
+  List<Uint8List> filterHashes;
+
+  MessageCfHeaders({
+    required this.filterType,
+    required this.stopHash,
+    required this.previousFilterHeader,
+    required this.filterHashes,
+  }) {
+    if (stopHash.length != 32) {
+      throw ArgumentError('Stop hash must be 32 bytes long');
+    }
+    if (previousFilterHeader.length != 32) {
+      throw ArgumentError('Previous filter hash must be 32 bytes long');
+    }
+    if (filterHashes.isEmpty) {
+      throw ArgumentError('Filter hashes cannot be empty');
+    }
+    if (filterHashes.any((h) => h.length != 32)) {
+      throw ArgumentError('Each filter hash must be 32 bytes long');
+    }
+  }
+
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add([filterType]);
+    payload.add(stopHash);
+    payload.add(previousFilterHeader);
+    payload.add(compactSize(filterHashes.length));
+    for (final hash in filterHashes) {
+      payload.add(hash);
+    }
+    final msgHeader = MessageHeader(
+      command: 'cfheaders',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
+  }
+
+  factory MessageCfHeaders.fromBytes(Uint8List bytes) {
+    if (bytes.length < 66) {
+      throw FormatException(
+        'CfHeaders message bytes must be at least 66 bytes long',
+      );
+    }
+    final filterType = bytes[0];
+    final stopHash = bytes.sublist(1, 33);
+    final previousFilterHash = bytes.sublist(33, 65);
+    final cspr = compactSizeParse(bytes.sublist(65));
+    if (cspr.value < 1) {
+      throw FormatException('At least one filter hash is required');
+    }
+    var offset = 65 + cspr.bytesRead;
+    final filterHashes = <Uint8List>[];
+    for (int i = 0; i < cspr.value; i++) {
+      if (offset + 32 > bytes.length) {
+        throw FormatException(
+          'Filter hash exceeds remaining bytes at index $i',
+        );
+      }
+      final hash = bytes.sublist(offset, offset + 32);
+      filterHashes.add(hash);
+      offset += 32;
+    }
+    return MessageCfHeaders(
+      filterType: filterType,
+      stopHash: stopHash,
+      previousFilterHeader: previousFilterHash,
+      filterHashes: filterHashes,
+    );
   }
 }
