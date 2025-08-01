@@ -5,6 +5,7 @@ import 'package:collection/collection.dart';
 
 import 'common.dart';
 import 'chain.dart';
+import 'chain_store.dart';
 import 'block.dart';
 import 'peer.dart';
 
@@ -32,6 +33,7 @@ class Node {
     _chainManager = ChainManager(
       network: network,
       blockHeadersFilePath: blockHeadersFilePath,
+      blockFilterHeadersFilePath: blockFilterHeadersFilePath,
       verbose: verbose,
     );
   }
@@ -56,6 +58,10 @@ class Node {
 
   String get blockHeadersFilePath {
     return '$_dataDir/headers.csv';
+  }
+
+  String get blockFilterHeadersFilePath {
+    return '$_dataDir/filter_headers.csv';
   }
 
   void _peerStatusChange(
@@ -94,8 +100,8 @@ class Node {
           return;
         }
         // return chain to headerSync status
-        if (_chainManager.status == ChainStatus.active) {
-          _chainManager.sync();
+        if (_chainManager.activeChain) {
+          _chainManager.deactivate();
         }
         // Start syncing headers
         if (syncBlockHeaders) {
@@ -134,6 +140,19 @@ class Node {
       case PeerStatus.compactFilterHeaderSyncing:
         break;
       case PeerStatus.compactFilterHeaderSynced:
+        if (_chainManager.hasValidFilterChain()) {
+          // activate and write the compact filter headers to disk
+          _chainManager.activateFilterChain();
+        } else {
+          _log.warning(
+            'Invalid compact filter headers from peer ${peer.ip}:${peer.port}',
+          );
+          peer.disconnect();
+          _peers.remove(peer);
+          // TODO:
+          //  - connect to another peer
+          //  - reset the chain
+        }
         break;
       case PeerStatus.disconnected:
         _peers.remove(peer);

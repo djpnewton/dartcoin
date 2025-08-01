@@ -114,6 +114,18 @@ bool listEquals<T>(List<T>? a, List<T>? b) {
   return true;
 }
 
+bool compareHashes(Uint8List hash1, Uint8List hash2) {
+  if (hash1.length != hash2.length) {
+    return false;
+  }
+  for (int i = 0; i < hash1.length; i++) {
+    if (hash1[i] != hash2[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// compute the hash256 (ie SHA-256(SHA-256(data))) of the input data
 Uint8List hash256(Uint8List data) {
   final firstHash = sha256(data);

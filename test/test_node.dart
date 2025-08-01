@@ -56,7 +56,11 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(network: Network.regtest, dataDir: nodeDataDir, verbose: true, syncCompactFilterHeaders: false);
+    node = Node(
+      network: Network.regtest,
+      dataDir: nodeDataDir,
+      syncCompactFilterHeaders: false,
+    );
   });
   tearDown(() async {
     // shutdown the node
@@ -154,5 +158,7 @@ void main() {
     await node.waitForBlockCount(249);
     // should have only one chain head now
     expect(node.chainHeads().length, equals(1));
+
+    // TODO: test the block filter headers through reorg
   });
 }
