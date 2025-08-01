@@ -5,6 +5,7 @@ import 'package:logging/logging.dart';
 
 import 'p2p_messages.dart';
 import 'block.dart';
+import 'blockfilter.dart';
 import 'chain.dart';
 import 'utils.dart';
 import 'common.dart';
@@ -16,12 +17,14 @@ enum PeerStatus {
   connecting,
   connected,
   handshakeComplete,
-  headersSyncing,
-  headersSynced,
+  blockHeadersSyncing,
+  blockHeadersSynced,
+  compactFilterHeaderSyncing,
+  compactFilterHeaderSynced,
   disconnected,
 }
 
-enum PeerStatusChangeReason { invalidHeader, noChainHead, socketClosed }
+enum PeerStatusChangeReason { invalidBlockHeader, noChainHead, socketClosed }
 
 typedef PeerStatusEvent =
     void Function(
@@ -311,6 +314,14 @@ class Peer {
       //    '       Header: Version: ${header.version}, Previous Block: ${header.previousBlockHeaderHash.toHex()}, Merkle Root: ${header.merkleRootHash.toHex()}, Time: ${header.time}, nBits: ${header.nBits}, Nonce: ${header.nonce}',
       //  );
       //}
+    } else if (message is MessageGetCfHeaders) {
+      _log.info(
+        '<<<<<: $ip:$port, GetCfHeaders: ${message.filterType} type, ${message.startHeight} start height, ${message.stopHash.toHex()} stop hash',
+      );
+    } else if (message is MessageCfHeaders) {
+      _log.info(
+        '<<<<<: $ip:$port, CfHeaders: ${message.filterType} type, ${message.stopHash.toHex()} stop hash, ${message.previousFilterHeader.toHex()} previous filter hash, ${message.filterHashes.length} hashes',
+      );
     } else if (message is MessageUnknown) {
       _log.info('<<<<<: $ip:$port, Unknown: ${message.command}');
     }
@@ -349,18 +360,18 @@ class Peer {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
       // add the block to the block headers
-      if (_status == PeerStatus.headersSynced) {
+      if (_status == PeerStatus.blockHeadersSynced) {
         if (_chainManager == null) {
           _log.warning('ChainManager is not initialized, cannot process block');
           return;
         }
-        switch (_chainManager!.addHeaders([message.block.header])) {
-          case AddHeadersResult.success:
+        switch (_chainManager!.addBlockHeaders([message.block.header])) {
+          case AddBlockHeadersResult.success:
             break; // block added successfully
-          case AddHeadersResult.invalidHeader:
+          case AddBlockHeadersResult.invalidBlockHeader:
             // TODO: disconnect peer?
             break; // invalid header,
-          case AddHeadersResult.noChainHead:
+          case AddBlockHeadersResult.noChainHead:
             // if the block is not part of any of our known chains, we need to request more headers
             final prev = _status;
             _status = PeerStatus.handshakeComplete;
@@ -372,9 +383,16 @@ class Peer {
             );
             break;
         }
+      } else if (_status == PeerStatus.compactFilterHeaderSynced) {
+        if (_chainManager == null) {
+          _log.warning('ChainManager is not initialized, cannot process block');
+          return;
+        }
+        // TODO: create the compact block filter from the block
+        //_chainManager!.addCompactFilterHeaders();
       }
     } else if (message is MessageHeaders) {
-      if (_status != PeerStatus.headersSyncing) {
+      if (_status != PeerStatus.blockHeadersSyncing) {
         _log.warning('recieved headers when not syncing');
         return;
       }
@@ -384,10 +402,10 @@ class Peer {
       }
       final chainManager = _chainManager!;
       // add the headers to the blockHeaders list
-      switch (chainManager.addHeaders(message.headers)) {
-        case AddHeadersResult.success:
+      switch (chainManager.addBlockHeaders(message.headers)) {
+        case AddBlockHeadersResult.success:
           break; // headers added successfully
-        case AddHeadersResult.invalidHeader:
+        case AddBlockHeadersResult.invalidBlockHeader:
           _log.warning(
             'Failed to add invalid headers: ${message.headers.length}',
           );
@@ -397,10 +415,10 @@ class Peer {
             this,
             _status,
             prev,
-            reason: PeerStatusChangeReason.invalidHeader,
+            reason: PeerStatusChangeReason.invalidBlockHeader,
           );
           return;
-        case AddHeadersResult.noChainHead:
+        case AddBlockHeadersResult.noChainHead:
           _log.warning('Failed to add headers, no chain head found');
           final prev = _status;
           _status = PeerStatus.handshakeComplete;
@@ -414,7 +432,7 @@ class Peer {
       }
       if (message.headers.length < maxBlockHeaders) {
         final prev = _status;
-        _status = PeerStatus.headersSynced;
+        _status = PeerStatus.blockHeadersSynced;
         _onStatusChange(this, _status, prev);
       } else {
         // request next batch of block headers
@@ -428,6 +446,36 @@ class Peer {
             headerHashes: chainManager.recentBlockHeadersHashes,
           ).toBytes(network),
         );
+      }
+    } else if (message is MessageCfHeaders) {
+      if (_status != PeerStatus.compactFilterHeaderSyncing) {
+        _log.warning('Received compact filter headers when not syncing');
+        return;
+      }
+      if (_chainManager == null) {
+        _log.warning(
+          'ChainManager is not initialized, cannot process compact filter headers',
+        );
+        return;
+      }
+      final chainManager = _chainManager!;
+      // add the headers to the compact filter list
+      if (message.filterType != BasicBlockFilter.filterType) {
+        _log.warning(
+          'Unsupported compact filter type: ${message.filterType}, expected 0',
+        );
+        return;
+      }
+      switch (chainManager.addCompactFilterHeaders(
+        message.previousFilterHeader,
+        message.filterHashes,
+        message.stopHash,
+      )) {
+        case AddCompactFilterHeadersResult.success:
+          _sendGetCfHeaders(socket, chainManager);
+          break;
+        case AddCompactFilterHeadersResult.invalidFilterHeader:
+          break;
       }
     }
   }
@@ -447,7 +495,7 @@ class Peer {
     _onStatusChange(this, _status, prev);
   }
 
-  void sync(ChainManager chainManager) {
+  void syncBlockHeaders(ChainManager chainManager) {
     if (_status != PeerStatus.handshakeComplete) {
       _log.warning(
         'Cannot start syncing, peer is not in handshake complete state: $ip:$port',
@@ -462,7 +510,7 @@ class Peer {
     _chainManager = chainManager;
     //  start requesting block headers
     final prev = _status;
-    _status = PeerStatus.headersSyncing;
+    _status = PeerStatus.blockHeadersSyncing;
     _onStatusChange(this, _status, prev);
     if (verbose) {
       _log.info(
@@ -474,5 +522,51 @@ class Peer {
         headerHashes: chainManager.recentBlockHeadersHashes,
       ).toBytes(network),
     );
+  }
+
+  void _sendGetCfHeaders(Socket socket, ChainManager chainManager) {
+    final startHeight = chainManager.bestCompactFilterHead.height + 1;
+    var endHeight = startHeight + 1999;
+    endHeight = endHeight > chainManager.bestChainHead.height
+        ? chainManager.bestChainHead.height
+        : endHeight;
+    final stopHash = chainManager.blockHashForHeight(endHeight);
+    if (stopHash == null) {
+      _log.warning(
+        'No block hash found for height $endHeight, cannot sync compact filters',
+      );
+      return;
+    }
+    if (verbose) {
+      _log.info(
+        '>>>>>: $ip:$port, GetCfHeaders: $startHeight-${headerHashNice(stopHash)} ($endHeight)',
+      );
+    }
+    socket.add(
+      MessageGetCfHeaders(
+        filterType: BasicBlockFilter.filterType,
+        startHeight: startHeight,
+        stopHash: stopHash,
+      ).toBytes(network),
+    );
+  }
+
+  void syncCompactFilterHeaders(ChainManager chainManager) {
+    if (_status != PeerStatus.blockHeadersSynced) {
+      _log.warning(
+        'Cannot start syncing, peer is not in block headers synced state: $ip:$port',
+      );
+      return;
+    }
+    if (_socket == null) {
+      _log.warning('No active socket connection to sync with: $ip:$port');
+      return;
+    }
+    final socket = _socket!;
+    //  start requesting compact filter headers
+    final prev = _status;
+    _status = PeerStatus.compactFilterHeaderSyncing;
+    _onStatusChange(this, _status, prev);
+    _sendGetCfHeaders(socket, chainManager);
   }
 }
