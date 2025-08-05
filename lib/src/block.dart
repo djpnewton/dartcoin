@@ -13,15 +13,17 @@ String headerHashNice(Uint8List hash) {
 }
 
 class BlockHeader {
-  int version;
-  Uint8List previousBlockHeaderHash;
-  Uint8List merkleRootHash;
-  int time;
-  int nBits;
-  int nonce;
+  final int version;
+  final Uint8List previousBlockHeaderHash;
+  final Uint8List merkleRootHash;
+  final int time;
+  final int nBits;
+  final int nonce;
+
+  Uint8List? _cachedHash;
 
   static const int blockHeaderSize = 80;
-  static BigInt maxTarget = BigInt.from(2).pow(256);
+  static final BigInt maxTarget = BigInt.from(2).pow(256);
 
   BlockHeader({
     required this.version,
@@ -50,7 +52,13 @@ class BlockHeader {
     return ((exponent << 24) | target).toInt();
   }
 
-  Uint8List hash() => hash256(toBytes());
+  Uint8List hash() {
+    if (_cachedHash != null) {
+      return _cachedHash!;
+    }
+    _cachedHash = hash256(toBytes());
+    return _cachedHash!;
+  }
 
   String hashNice() => headerHashNice(hash());
 
