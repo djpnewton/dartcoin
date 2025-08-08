@@ -19,14 +19,14 @@ class Node {
   late final ChainManager _chainManager;
   final bool verbose;
   final bool syncBlockHeaders;
-  final bool syncCompactFilterHeaders;
+  final bool syncBlockFilterHeaders;
 
   Node({
     required this.network,
     String? dataDir,
     this.verbose = false,
     this.syncBlockHeaders = true,
-    this.syncCompactFilterHeaders = true,
+    this.syncBlockFilterHeaders = true,
   }) {
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
@@ -123,9 +123,9 @@ class Node {
           if (!_chainManager.activeChain) {
             _chainManager.activate();
           }
-          // start syncing compact filters
-          if (syncCompactFilterHeaders) {
-            peer.syncCompactFilterHeaders(_chainManager);
+          // start syncing block filters
+          if (syncBlockFilterHeaders) {
+            peer.syncBlockFilterHeaders(_chainManager);
           }
           // TODO:
           //  - add new peers and wait for txs/blocks
@@ -140,12 +140,12 @@ class Node {
           //  - reset the chain
         }
         break;
-      case PeerStatus.compactFilterHeaderSyncing:
+      case PeerStatus.blockFilterHeaderSyncing:
         break;
-      case PeerStatus.compactFilterHeaderSynced:
+      case PeerStatus.blockFilterHeaderSynced:
         if (!_chainManager.hasValidFilterChain()) {
           _log.warning(
-            'Invalid compact filter headers from peer ${peer.ip}:${peer.port}',
+            'Invalid block filter headers from peer ${peer.ip}:${peer.port}',
           );
           peer.disconnect();
           _peers.remove(peer);
@@ -224,16 +224,6 @@ class Node {
       return null; // height out of range or not indexed
     }
     return reverseHash(header).toHex();
-  }
-
-  void syncBlockFilterHeaders() {
-    if (syncCompactFilterHeaders) {
-      for (final peer in _peers) {
-        peer.syncCompactFilterHeaders(_chainManager);
-      }
-    } else {
-      _log.warning('Syncing compact filter headers is disabled.');
-    }
   }
 
   Future<bool> waitForBlockCount(

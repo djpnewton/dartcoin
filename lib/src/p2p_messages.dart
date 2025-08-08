@@ -136,7 +136,7 @@ class MessageHeader {
 
 class Message {
   static const version = 70015; // Default protocol version
-  static const nodeCompactFilters =
+  static const nodeCompactBlockFilters =
       1 << 6; // supports BIP 157 messages for filter type 0x00
 
   Message();

@@ -12,7 +12,7 @@ final _log = Logger('Chain');
 
 enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 
-enum AddCompactFilterHeadersResult { success, invalidFilterHeader }
+enum AddBlockFilterHeadersResult { success, invalidBlockFilterHeader }
 
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
@@ -31,7 +31,7 @@ class ChainManager {
   final List<ChainEntry> _chainHeads = [];
   ChainEntry? _fileChainHead;
   final BlockHeaderStore _blockHeaderStore;
-  // compact filter headers
+  // block filter headers
   late BlockFilterHeaderEntry _bestBlockFilterHead;
   BlockFilterHeaderEntry? _fileBlockFilterHead;
   final BlockFilterHeaderStore _blockFilterHeaderStore;
@@ -70,7 +70,7 @@ class ChainManager {
     _bestChainHead = _initBestHeader(network);
     _updateBlockHeaderHeightIndex();
     _chainHeads.add(_bestChainHead);
-    _bestBlockFilterHead = _initBestCompactFilterHeaderHead(network);
+    _bestBlockFilterHead = _initBestBlockFilterHeaderHead(network);
     _updateBlockFilterHeaderHeightIndex();
   }
 
@@ -113,8 +113,8 @@ class ChainManager {
     return _makeChainEntry(_genesisBlockHeader, null);
   }
 
-  BlockFilterHeaderEntry _initBestCompactFilterHeaderHead(Network network) {
-    // check if the compact filter headers file exists and is not empty
+  BlockFilterHeaderEntry _initBestBlockFilterHeaderHead(Network network) {
+    // check if the block filter headers file exists and is not empty
     if (_blockFilterHeaderStore.exists() && !_blockFilterHeaderStore.empty()) {
       final headers = _blockFilterHeaderStore.read();
       if (headers.isNotEmpty) {
@@ -746,7 +746,7 @@ class ChainManager {
     return AddBlockHeadersResult.success;
   }
 
-  AddCompactFilterHeadersResult addCompactFilterHeaders(
+  AddBlockFilterHeadersResult addBlockFilterHeaders(
     Uint8List previousFilterHash,
     List<Uint8List> filterHashes,
     Uint8List stopHash,
@@ -755,10 +755,10 @@ class ChainManager {
     // check previous filter hash
     if (!compareHashes(_bestBlockFilterHead.header, previousFilterHash)) {
       _log.warning(
-        'Received compact filter header with invalid previous header: ${headerHashNice(_bestBlockFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
+        'Received block filter header with invalid previous header: ${headerHashNice(_bestBlockFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
       );
-      return AddCompactFilterHeadersResult
-          .invalidFilterHeader; // abort adding compact filter headers
+      return AddBlockFilterHeadersResult
+          .invalidBlockFilterHeader; // abort adding block filter headers
     }
     for (final filterHash in filterHashes) {
       // create header
@@ -780,7 +780,7 @@ class ChainManager {
     }
 
     _updateBlockFilterHeaderHeightIndex();
-    return AddCompactFilterHeadersResult.success;
+    return AddBlockFilterHeadersResult.success;
   }
 
   bool hasMinimumChainWork() {

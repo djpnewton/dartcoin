@@ -90,7 +90,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.compactFilterHeaderSynced,
+      PeerStatus.blockFilterHeaderSynced,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first
@@ -161,7 +161,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.compactFilterHeaderSynced,
+      PeerStatus.blockFilterHeaderSynced,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first
