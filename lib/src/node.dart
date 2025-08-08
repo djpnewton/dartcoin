@@ -4,6 +4,7 @@ import 'package:logging/logging.dart';
 import 'package:collection/collection.dart';
 
 import 'common.dart';
+import 'utils.dart';
 import 'chain.dart';
 import 'chain_store.dart';
 import 'block.dart';
@@ -119,7 +120,9 @@ class Node {
             );
           }
           // activate chain (and write to disk)
-          _chainManager.activate();
+          if (!_chainManager.activeChain) {
+            _chainManager.activate();
+          }
           // start syncing compact filters
           if (syncCompactFilterHeaders) {
             peer.syncCompactFilterHeaders(_chainManager);
@@ -140,10 +143,7 @@ class Node {
       case PeerStatus.compactFilterHeaderSyncing:
         break;
       case PeerStatus.compactFilterHeaderSynced:
-        if (_chainManager.hasValidFilterChain()) {
-          // activate and write the compact filter headers to disk
-          _chainManager.activateFilterChain();
-        } else {
+        if (!_chainManager.hasValidFilterChain()) {
           _log.warning(
             'Invalid compact filter headers from peer ${peer.ip}:${peer.port}',
           );
@@ -191,7 +191,7 @@ class Node {
   }
 
   String bestBlockHash() {
-    return headerHashNice(_chainManager.bestChainHead.header.hash());
+    return _chainManager.bestChainHead.header.hashNice();
   }
 
   String? blockHashForHeight(int height) {
@@ -206,6 +206,36 @@ class Node {
     return _chainManager.chainHeads;
   }
 
+  int blockHeaderCount() {
+    return _chainManager.bestBlockFilterHead.height;
+  }
+
+  String bestBlockFilterHeader() {
+    return reverseHash(_chainManager.bestBlockFilterHead.header).toHex();
+  }
+
+  int blockFilterHeaderCount() {
+    return _chainManager.bestBlockFilterHead.height;
+  }
+
+  String? blockFilterHeaderForHeight(int height) {
+    final header = _chainManager.blockFilterHeaderForHeight(height);
+    if (header == null) {
+      return null; // height out of range or not indexed
+    }
+    return reverseHash(header).toHex();
+  }
+
+  void syncBlockFilterHeaders() {
+    if (syncCompactFilterHeaders) {
+      for (final peer in _peers) {
+        peer.syncCompactFilterHeaders(_chainManager);
+      }
+    } else {
+      _log.warning('Syncing compact filter headers is disabled.');
+    }
+  }
+
   Future<bool> waitForBlockCount(
     int count, {
     Duration timeout = const Duration(seconds: 30),
@@ -213,6 +243,20 @@ class Node {
     final startTime = DateTime.now();
     while (DateTime.now().difference(startTime) < timeout) {
       if (blockCount() >= count) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    return false;
+  }
+
+  Future<bool> waitForBlockFilterHeaderCount(
+    int count, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final startTime = DateTime.now();
+    while (DateTime.now().difference(startTime) < timeout) {
+      if (_chainManager.bestBlockFilterHead.height >= count) {
         return true;
       }
       await Future<void>.delayed(const Duration(seconds: 1));
@@ -232,7 +276,7 @@ class Node {
       if (peer?.status == status) {
         return true;
       }
-      await Future<void>.delayed(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
     }
     return false;
   }

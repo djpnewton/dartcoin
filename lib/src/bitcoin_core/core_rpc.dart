@@ -5,6 +5,13 @@ import 'package:http/http.dart' as http;
 
 final _log = Logger('CoreJsonRpc');
 
+class CoreBlockFilter {
+  final String filter;
+  final String header;
+
+  CoreBlockFilter({required this.filter, required this.header});
+}
+
 class CoreJsonRpc {
   static const String defaultHost = '127.0.0.1';
   static const int defaultPort = 18443; // regtest default port
@@ -106,6 +113,22 @@ class CoreJsonRpc {
   Future<int> getBlockCount() async {
     final response = await call('getblockcount');
     return response['result'] as int;
+  }
+
+  Future<CoreBlockFilter> getBlockFilter(
+    String blockHash, [
+    String filterType = 'basic',
+  ]) async {
+    final response = await call('getblockfilter', [blockHash, filterType]);
+    return CoreBlockFilter(
+      filter: response['result']['filter'] as String,
+      header: response['result']['header'] as String,
+    );
+  }
+
+  Future<String> getBlockHash(int height) async {
+    final response = await call('getblockhash', [height]);
+    return response['result'] as String;
   }
 
   Future<bool> waitForBlockCount(
