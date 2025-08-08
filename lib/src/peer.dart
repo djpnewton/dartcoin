@@ -20,8 +20,8 @@ enum PeerStatus {
   handshakeComplete,
   blockHeadersSyncing,
   blockHeadersSynced,
-  compactFilterHeaderSyncing,
-  compactFilterHeaderSynced,
+  blockFilterHeaderSyncing,
+  blockFilterHeaderSynced,
   disconnected,
 }
 
@@ -81,8 +81,8 @@ class Peer {
   Socket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
-  Timer? _cfHeadersTimer;
-  int _cfHeadersTimeoutCount = 0;
+  Timer? _bfHeadersTimer;
+  int _bfHeadersTimeoutCount = 0;
 
   PeerStatus get status => _status;
 
@@ -159,7 +159,7 @@ class Peer {
 
   void _doStatusChange(PeerStatus newStatus, {PeerStatusChangeReason? reason}) {
     // reset any timers
-    _clearCfHeadersTimer();
+    _clearBfHeadersTimer();
     // check if the status is already the same
     if (_status == newStatus) {
       //throw StateError(
@@ -387,7 +387,7 @@ class Peer {
         }
         switch (_chainManager!.addBlockHeaders([message.block.header])) {
           case AddBlockHeadersResult.success:
-            if (_status == PeerStatus.compactFilterHeaderSynced) {
+            if (_status == PeerStatus.blockFilterHeaderSynced) {
               // we now need to resync to get the new block filter headers
               _doStatusChange(
                 PeerStatus.blockHeadersSynced,
@@ -406,11 +406,11 @@ class Peer {
             );
             break;
         }
-        if (_cfHeadersTimer?.isActive ?? false) {
-          // reset the timer to request compact filter headers again
+        if (_bfHeadersTimer?.isActive ?? false) {
+          // reset the timer to request block filter headers again
           _startOrResetCfHeadersTimer();
         }
-        if (_status == PeerStatus.compactFilterHeaderSynced) {
+        if (_status == PeerStatus.blockFilterHeaderSynced) {
           if (_chainManager == null) {
             _log.warning(
               'ChainManager is not initialized, cannot process block',
@@ -418,7 +418,7 @@ class Peer {
             return;
           }
           // TODO: create the compact block filter from the block
-          //_chainManager!.addCompactFilterHeaders();
+          //_chainManager!.addBlockFilterHeaders();
         }
       }
     } else if (message is MessageHeaders) {
@@ -468,33 +468,33 @@ class Peer {
         );
       }
     } else if (message is MessageCfHeaders) {
-      _clearCfHeadersTimer();
-      if (_status != PeerStatus.compactFilterHeaderSyncing) {
-        _log.warning('Received compact filter headers when not syncing');
+      _clearBfHeadersTimer();
+      if (_status != PeerStatus.blockFilterHeaderSyncing) {
+        _log.warning('Received block filter headers when not syncing');
         return;
       }
       if (_chainManager == null) {
         _log.warning(
-          'ChainManager is not initialized, cannot process compact filter headers',
+          'ChainManager is not initialized, cannot process block filter headers',
         );
         return;
       }
       final chainManager = _chainManager!;
-      // add the headers to the compact filter list
+      // add the headers to the block filter list
       if (message.filterType != BasicBlockFilter.filterType) {
         _log.warning(
-          'Unsupported compact filter type: ${message.filterType}, expected 0',
+          'Unsupported block filter type: ${message.filterType}, expected 0',
         );
         return;
       }
-      switch (chainManager.addCompactFilterHeaders(
+      switch (chainManager.addBlockFilterHeaders(
         message.previousFilterHeader,
         message.filterHashes,
         message.stopHash,
       )) {
-        case AddCompactFilterHeadersResult.success:
+        case AddBlockFilterHeadersResult.success:
           break;
-        case AddCompactFilterHeadersResult.invalidFilterHeader:
+        case AddBlockFilterHeadersResult.invalidBlockFilterHeader:
           _log.warning(
             'Failed to add invalid filter headers: ${message.filterHashes.length}',
           );
@@ -504,7 +504,7 @@ class Peer {
         message.stopHash,
         chainManager.bestChainHead.header.hash(),
       )) {
-        _doStatusChange(PeerStatus.compactFilterHeaderSynced);
+        _doStatusChange(PeerStatus.blockFilterHeaderSynced);
       } else {
         // request next batch of block filter headers
         _sendGetCfHeaders(socket, chainManager);
@@ -513,33 +513,33 @@ class Peer {
   }
 
   void _startOrResetCfHeadersTimer() {
-    _clearCfHeadersTimer();
+    _clearBfHeadersTimer();
     if (_socket == null) {
       _log.warning(
-        'No active socket connection to start compact filter headers timer',
+        'No active socket connection to start block filter headers timer',
       );
       return;
     }
     if (_chainManager == null) {
       _log.warning(
-        'ChainManager is not initialized, cannot start compact filter headers timer',
+        'ChainManager is not initialized, cannot start block filter headers timer',
       );
       return;
     }
-    _cfHeadersTimer = Timer(
+    _bfHeadersTimer = Timer(
       const Duration(seconds: 2),
       () => _sendGetCfHeaders(_socket!, _chainManager!),
     );
   }
 
-  void _clearCfHeadersTimer() {
-    _cfHeadersTimer?.cancel();
-    _cfHeadersTimer = null;
-    _cfHeadersTimeoutCount = 0;
+  void _clearBfHeadersTimer() {
+    _bfHeadersTimer?.cancel();
+    _bfHeadersTimer = null;
+    _bfHeadersTimeoutCount = 0;
   }
 
   void disconnect() {
-    _clearCfHeadersTimer();
+    _clearBfHeadersTimer();
     if (_socket == null) {
       _log.warning('No active connection to disconnect from: $ip:$port');
       return;
@@ -605,23 +605,23 @@ class Peer {
       ).toBytes(network),
     );
     // set timer because the peer might not have processed the block filters yet
-    if (_cfHeadersTimeoutCount < 5) {
-      _cfHeadersTimer = Timer(const Duration(seconds: 1), _cfHeadersTimeout);
+    if (_bfHeadersTimeoutCount < 5) {
+      _bfHeadersTimer = Timer(const Duration(seconds: 1), _bfHeadersTimeout);
     }
   }
 
-  void _cfHeadersTimeout() {
-    _cfHeadersTimeoutCount++;
-    _cfHeadersTimer = null;
-    if (_cfHeadersTimeoutCount >= 5) {
+  void _bfHeadersTimeout() {
+    _bfHeadersTimeoutCount++;
+    _bfHeadersTimer = null;
+    if (_bfHeadersTimeoutCount >= 5) {
       _log.warning(
-        'Compact filter header sync timed out after 5 attempts, peer: $ip:$port',
+        'block filter header sync timed out after 5 attempts, peer: $ip:$port',
       );
       return;
     }
-    if (_status != PeerStatus.compactFilterHeaderSyncing) {
+    if (_status != PeerStatus.blockFilterHeaderSyncing) {
       _log.warning(
-        'Compact filter header sync timed out, peer is not in compact filter header syncing state: $ip:$port',
+        'block filter header sync timed out, peer is not in block filter header syncing state: $ip:$port',
       );
       return;
     }
@@ -633,11 +633,11 @@ class Peer {
       _log.warning('ChainManager is not initialized, cannot sync headers');
       return;
     }
-    // request compact filter headers again
+    // request block filter headers again
     _sendGetCfHeaders(_socket!, _chainManager!);
   }
 
-  void syncCompactFilterHeaders(ChainManager chainManager) {
+  void syncBlockFilterHeaders(ChainManager chainManager) {
     if (!_statusAtLeast(PeerStatus.blockHeadersSynced)) {
       _log.warning(
         'Cannot start syncing, peer is not in block headers synced state: $ip:$port',
@@ -646,16 +646,16 @@ class Peer {
     }
     if (chainManager.bestBlockFilterHead.height <
         chainManager.bestChainHead.height) {
-      //  start requesting compact filter headers
-      _doStatusChange(PeerStatus.compactFilterHeaderSyncing);
+      //  start requesting block filter headers
+      _doStatusChange(PeerStatus.blockFilterHeaderSyncing);
       _startOrResetCfHeadersTimer();
     } else {
       if (verbose) {
         _log.info(
-          'Compact filter headers are already synced for peer: $ip:$port',
+          'block filter headers are already synced for peer: $ip:$port',
         );
       }
-      _doStatusChange(PeerStatus.compactFilterHeaderSynced);
+      _doStatusChange(PeerStatus.blockFilterHeaderSynced);
     }
   }
 }
