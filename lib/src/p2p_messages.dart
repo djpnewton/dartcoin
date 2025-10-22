@@ -183,6 +183,8 @@ class Message {
               MessageTransaction.fromBytes(result.value.payload),
               result.value,
             );
+          case 'getaddr':
+            return (MessageGetAddr(), result.value);
           case 'addr':
             return (
               MessageAddress.fromBytes(result.value.payload),
@@ -690,6 +692,16 @@ class MessageTransaction extends Message {
       throw FormatException('Transaction message bytes cannot be empty');
     }
     return MessageTransaction(transaction: Transaction.fromBytes(bytes));
+  }
+}
+
+class MessageGetAddr extends Message {
+  MessageGetAddr();
+
+  Uint8List toBytes(Network network) {
+    // The getaddr message has no payload, so we just return the header
+    final msgHeader = MessageHeader(command: 'getaddr', payload: Uint8List(0));
+    return msgHeader.toBytes(network);
   }
 }
 
