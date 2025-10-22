@@ -24,6 +24,7 @@ export 'src/siphash.dart';
 export 'src/node.dart';
 export 'src/p2p_messages.dart';
 export 'src/peer.dart';
+export 'src/peer_manager.dart';
 
 // bitcoin core
 export 'src/bitcoin_core/core_process.dart';

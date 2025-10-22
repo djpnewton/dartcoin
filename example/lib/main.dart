@@ -383,6 +383,25 @@ class TestP2pCommand extends Command<void> {
         'testnet4': 'Use the Bitcoin test network 4.',
       },
     );
+    argParser.addFlag(
+      'pref-peering',
+      abbr: 'e',
+      help:
+          'Enable preferential peering to find peers that support compact block filters.',
+      defaultsTo: true,
+    );
+    argParser.addFlag(
+      'sync-block-headers',
+      abbr: 'b',
+      help: 'Enable syncing of block headers.',
+      defaultsTo: true,
+    );
+    argParser.addFlag(
+      'sync-block-filter-headers',
+      abbr: 'f',
+      help: 'Enable syncing of compact block filter headers.',
+      defaultsTo: true,
+    );
   }
 
   @override
@@ -397,11 +416,7 @@ class TestP2pCommand extends Command<void> {
     };
     _log.info('Network: ${network.name}');
     final peerRaw = argResults?.option('peer');
-    if (peerRaw == null) {
-      _log.info('Using dns seed to find peer.');
-      ip = await Peer.ipFromDnsSeed(network, verbose: true);
-      port = Peer.defaultPort(network);
-    } else {
+    if (peerRaw != null) {
       final parts = peerRaw.split(':');
       if (parts.length != 2) {
         _log.info('Invalid peer format. Use <ip>:<port>.');
@@ -414,8 +429,45 @@ class TestP2pCommand extends Command<void> {
         return;
       }
     }
-    final node = Node(network: network, verbose: true);
-    node.connect(ip: ip, port: port);
+    final preferentialPeering =
+        argResults?.flag('pref-peering') ?? true;
+    final syncBlockHeaders =
+        argResults?.flag('sync-block-headers') ?? true;
+    final syncBlockFilterHeaders =
+        argResults?.flag('sync-block-filter-headers') ?? true;
+
+    _log.info(
+      'Preferential Peering: $preferentialPeering, '
+      'Sync Block Headers: $syncBlockHeaders, '
+      'Sync Block Filter Headers: $syncBlockFilterHeaders',
+    );
+    
+    final peerManager = PeerManager(
+      network: network,
+      verbose: true,
+      preferentialPeering: preferentialPeering,
+    );
+    Peer? peer;
+    if (ip == null || port == null) {
+      _log.info('Using dns seed to find peer.');
+      peer = await peerManager.findPeer();
+    } else {
+      _log.info('Connecting to peer $ip:$port.');
+      peer = await peerManager.connectPeer(PeerCandidate(ip: ip, port: port));
+    }
+    if (peer == null) {
+      _log.warning('No suitable peer found that supports compact block filters.');
+      return;
+    }
+    _log.info('Found suitable peer: ${peer.ip}:${peer.port}');
+    final node = Node(
+      network: network,
+      verbose: true,
+      syncBlockFilterHeaders: syncBlockFilterHeaders,
+      syncBlockHeaders: syncBlockHeaders,
+    );
+    node.add(peer: peer);
+
   }
 }
 
@@ -470,9 +522,13 @@ class RegtestExampleCommand extends Command<void> {
       _log.info('Waiting for proc1 to reach block count 149...');
       await proc1.rpc.waitForBlockCount(149);
       final bestHashProc1 = await proc1.rpc.getBestBlockHash();
-      _log.info('proc1: Best block hash after generating 100 blocks: $bestHashProc1');
+      _log.info(
+        'proc1: Best block hash after generating 100 blocks: $bestHashProc1',
+      );
       if (hash149 == bestHashProc1) {
-        _log.info('Both processes have the same best block hash after chain reorg.');
+        _log.info(
+          'Both processes have the same best block hash after chain reorg.',
+        );
       } else {
         _log.warning(
           'Best block hashes differ between processes: proc1: $bestHashProc1, proc2: $hash149',
@@ -503,6 +559,7 @@ void main(List<String> args) {
         ..addCommand(PrivateKeyCommand())
         ..addCommand(TestP2pCommand())
         ..addCommand(RegtestExampleCommand());
+
   runner
       .run(args)
       .catchError((dynamic e) {

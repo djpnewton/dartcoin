@@ -18,6 +18,7 @@ enum PeerStatus {
   connecting,
   connected,
   handshakeComplete,
+  requestAddrs,
   blockHeadersSyncing,
   blockHeadersSynced,
   blockFilterHeaderSyncing,
@@ -40,6 +41,8 @@ typedef PeerStatusEvent =
       PeerStatusChangeReason? reason,
     });
 
+typedef PeerAddressesEvent = void Function(Peer peer, List<Address> addresses);
+
 Uint8List _ipv4ToIpv6(String ipv4) {
   final parts = ipv4.split('.');
   if (parts.length != 4) {
@@ -56,6 +59,32 @@ Uint8List _ipv4ToIpv6(String ipv4) {
   );
 }
 
+bool _isIpv6(Uint8List address) {
+  // check size
+  if (address.length != 16) {
+    return false;
+  }
+  // check if ipv4-mapped
+  if (address.sublist(0, 10).every((byte) => byte == 0) &&
+      address[10] == 0xff &&
+      address[11] == 0xff) {
+    return false;
+  }
+  return true;
+}
+
+String _ipv6ToString(Uint8List ipv6) {
+  if (ipv6.length != 16) {
+    throw FormatException('Invalid IPv6 address length');
+  }
+  final parts = <String>[];
+  for (var i = 0; i < 16; i += 2) {
+    final part = (ipv6[i] << 8) | ipv6[i + 1];
+    parts.add(part.toRadixString(16));
+  }
+  return parts.join(':');
+}
+
 String _ipv6ToIpv4(Uint8List ipv6) {
   if (ipv6.length != 16) {
     throw FormatException('Invalid IPv6 address length');
@@ -65,7 +94,15 @@ String _ipv6ToIpv4(Uint8List ipv6) {
       ipv6[11] == 0xff) {
     return '${ipv6[12]}.${ipv6[13]}.${ipv6[14]}.${ipv6[15]}';
   }
-  throw FormatException('Not a valid IPv4-mapped IPv6 address');
+  throw FormatException('Not a valid IPv4-mapped IPv6 address ${ipv6.toHex()}');
+}
+
+String parseIpAddress(Uint8List address) {
+  if (_isIpv6(address)) {
+    return _ipv6ToString(address);
+  } else {
+    return _ipv6ToIpv4(address);
+  }
 }
 
 class Peer {
@@ -77,22 +114,40 @@ class Peer {
   final String userAgent = '/dartcoin:0.1/';
   final bool verbose;
 
-  final PeerStatusEvent _onStatusChange;
+  PeerStatusEvent _onStatusChange;
+  PeerAddressesEvent? _onAddresses;
   Socket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
   Timer? _bfHeadersTimer;
   int _bfHeadersTimeoutCount = 0;
+  int? _serviceFlags;
 
   PeerStatus get status => _status;
+  int? get serviceFlags => _serviceFlags;
+  bool get nodeCompactFiltersSupport =>
+      (_serviceFlags != null) &&
+      ((_serviceFlags! & Message.nodeCompactBlockFilters) != 0);
 
   Peer({
     required this.ip,
     required this.port,
     required this.network,
     required PeerStatusEvent onStatusChange,
+    required PeerAddressesEvent? onAddresses,
     required this.verbose,
-  }) : _onStatusChange = onStatusChange;
+  }) : _onStatusChange = onStatusChange,
+       _onAddresses = onAddresses;
+
+  void setPeerStatusChangeCallback(PeerStatusEvent callback) {
+    // set the callback for status changes
+    _onStatusChange = callback;
+  }
+
+  void setAddressesCallback(PeerAddressesEvent? callback) {
+    // set the callback for receiving addresses
+    _onAddresses = callback;
+  }
 
   static int defaultPort(Network network) {
     return switch (network) {
@@ -181,7 +236,11 @@ class Peer {
       _log.info('Connecting to peer: $ip:$port');
     }
     try {
-      _socket = await Socket.connect(ip, port);
+      _socket = await Socket.connect(
+        ip,
+        port,
+        timeout: const Duration(seconds: 5),
+      );
       final socket = _socket!;
       _doStatusChange(PeerStatus.connected);
       if (verbose) {
@@ -264,6 +323,7 @@ class Peer {
       );
     } catch (error) {
       _log.severe('Failed to connect to peer: $ip:$port, Error: $error');
+      _doStatusChange(PeerStatus.disconnected);
     }
   }
 
@@ -315,11 +375,15 @@ class Peer {
       _log.info(
         '<<<<<: $ip:$port, Address: ${message.addresses.length} addresses',
       );
-      for (final addr in message.addresses) {
-        _log.info(
-          '       IP Addr: ${_ipv6ToIpv4(addr.ipAddress)}, Port: ${addr.port}, Time: ${addr.time}',
-        );
-      }
+      //for (final addr in message.addresses) {
+      //  final services = addr.services.toRadixString(16).padLeft(8, '0');
+      //  final nodeCompactBlockFiltersSupport =
+      //      (addr.services & Message.nodeCompactBlockFilters) != 0;
+      //  final ipAddr = parseIpAddress(addr.ipAddress);
+      //  _log.info(
+      //    '       Services: $services, Block Filters: $nodeCompactBlockFiltersSupport, IP Addr: $ipAddr, Port: ${addr.port}, Time: ${addr.time}',
+      //  );
+      //}
     } else if (message is MessageGetHeaders) {
       _log.info(
         '<<<<<: $ip:$port, GetHeaders: ${message.headerHashes.length} hashes',
@@ -357,6 +421,8 @@ class Peer {
 
   void handleMessage(Message message, Socket socket) {
     if (message is MessageVersion) {
+      // save peer data
+      _serviceFlags = message.serviceFlags;
     } else if (message is MessageVerack) {
       // send a verack message back to the peer
       if (verbose) {
@@ -375,6 +441,10 @@ class Peer {
         _log.info('>>>>>: $ip:$port, GetData');
       }
       socket.add(MessageGetData(inventory: message.inventory).toBytes(network));
+    } else if (message is MessageAddress) {
+      if (_status == PeerStatus.requestAddrs && _onAddresses != null) {
+        _onAddresses!(this, message.addresses);
+      }
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
@@ -657,5 +727,20 @@ class Peer {
       }
       _doStatusChange(PeerStatus.blockFilterHeaderSynced);
     }
+  }
+
+  void requestAddrs() {
+    if (_socket == null) {
+      _log.warning(
+        'No active socket connection to request addrs from: $ip:$port',
+      );
+      return;
+    }
+    _doStatusChange(PeerStatus.requestAddrs);
+    final socket = _socket!;
+    if (verbose) {
+      _log.info('>>>>>: $ip:$port, GetAddr');
+    }
+    socket.add(MessageGetAddr().toBytes(network));
   }
 }

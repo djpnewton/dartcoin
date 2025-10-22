@@ -104,10 +104,24 @@ class Node {
         if (_chainManager.activeChain) {
           _chainManager.deactivate();
         }
+        // check if peer supports block filters
+        if (verbose) {
+          _log.info(
+            'Peer compact filter support: ${peer.nodeCompactFiltersSupport}',
+          );
+        }
+        if (!peer.nodeCompactFiltersSupport) {
+          _log.warning(
+            'Peer ${peer.ip}:${peer.port} does not support compact block filters',
+          );
+          break;
+        }
         // Start syncing headers
         if (syncBlockHeaders) {
           peer.syncBlockHeaders(_chainManager);
         }
+        break;
+      case PeerStatus.requestAddrs:
         break;
       case PeerStatus.blockHeadersSyncing:
         break;
@@ -168,10 +182,29 @@ class Node {
       port: port,
       network: network,
       onStatusChange: _peerStatusChange,
+      onAddresses: null,
       verbose: verbose,
     );
     _peers.add(peer);
     peer.connect();
+  }
+
+  void add({required Peer peer}) {
+    if (peer.network != network) {
+      throw ArgumentError(
+        'Peer network ${peer.network} does not match node network $network',
+      );
+    }
+    if (peer.status != PeerStatus.handshakeComplete) {
+      throw ArgumentError(
+        'Peer must be in handshakeComplete status to be added to node',
+      );
+    }
+    peer.setPeerStatusChangeCallback(_peerStatusChange);
+    peer.setAddressesCallback(null);
+    _peers.add(peer);
+    // manually trigger status change to handshakeComplete
+    _peerStatusChange(peer, PeerStatus.handshakeComplete, peer.status);
   }
 
   void shutdown() {
