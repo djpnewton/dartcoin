@@ -244,7 +244,7 @@ class Node {
   }
 
   String bestBlockFilterHeader() {
-    return reverseHash(_chainManager.bestBlockFilterHead.header).toHex();
+    return _chainManager.bestBlockFilterHead.header.reverse().toHex();
   }
 
   int blockFilterHeaderCount() {
@@ -256,7 +256,7 @@ class Node {
     if (header == null) {
       return null; // height out of range or not indexed
     }
-    return reverseHash(header).toHex();
+    return header.reverse().toHex();
   }
 
   Future<bool> waitForBlockCount(

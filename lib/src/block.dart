@@ -4,12 +4,8 @@ import 'common.dart';
 import 'utils.dart';
 import 'transaction.dart';
 
-Uint8List reverseHash(Uint8List hash) {
-  return Uint8List.fromList(hash.reversed.toList());
-}
-
 String headerHashNice(Uint8List hash) {
-  return reverseHash(hash).toHex().padLeft(64, '0');
+  return hash.reverse().toHex().padLeft(64, '0');
 }
 
 class BlockHeader {
@@ -70,18 +66,18 @@ class BlockHeader {
   Uint8List toBytes() {
     final buffer = BytesBuilder();
     buffer.add(
-      Uint8List(4)..buffer.asByteData().setInt32(0, version, Endian.little),
+      Uint8List(4)..buffer.asByteData().setUint32(0, version, Endian.little),
     );
     buffer.add(previousBlockHeaderHash);
     buffer.add(merkleRootHash);
     buffer.add(
-      Uint8List(4)..buffer.asByteData().setInt32(0, time, Endian.little),
+      Uint8List(4)..buffer.asByteData().setUint32(0, time, Endian.little),
     );
     buffer.add(
-      Uint8List(4)..buffer.asByteData().setInt32(0, nBits, Endian.little),
+      Uint8List(4)..buffer.asByteData().setUint32(0, nBits, Endian.little),
     );
     buffer.add(
-      Uint8List(4)..buffer.asByteData().setInt32(0, nonce, Endian.little),
+      Uint8List(4)..buffer.asByteData().setUint32(0, nonce, Endian.little),
     );
     return buffer.toBytes();
   }
@@ -95,17 +91,17 @@ class BlockHeader {
     final buffer = ByteData.sublistView(bytes);
     int offset = 0;
 
-    final version = buffer.getInt32(offset, Endian.little);
+    final version = buffer.getUint32(offset, Endian.little);
     offset += 4;
     final previousBlockHeaderHash = bytes.sublist(offset, offset + 32);
     offset += 32;
     final merkleRootHash = bytes.sublist(offset, offset + 32);
     offset += 32;
-    final time = buffer.getInt32(offset, Endian.little);
+    final time = buffer.getUint32(offset, Endian.little);
     offset += 4;
-    final nBits = buffer.getInt32(offset, Endian.little);
+    final nBits = buffer.getUint32(offset, Endian.little);
     offset += 4;
-    final nonce = buffer.getInt32(offset, Endian.little);
+    final nonce = buffer.getUint32(offset, Endian.little);
 
     return BlockHeader(
       version: version,
