@@ -225,15 +225,15 @@ class Transaction {
     required this.locktime,
   });
 
-  String txid() {
-    return hash256(toBytes()).toHex();
+  String wtxid() {
+    return hash256(toBytes()).reversed.toList().toHex();
   }
 
-  String wtxid() {
+  String txid() {
     if (witness == null) {
-      return txid();
+      return wtxid();
     }
-    // wtxid excludes the marker/flag and witness data
+    // txid excludes the marker/flag and witness data
     final buffer = BytesBuilder();
     buffer.add(
       Uint8List(4)..buffer.asByteData().setUint32(0, version, Endian.little),
@@ -251,7 +251,7 @@ class Transaction {
     buffer.add(
       Uint8List(4)..buffer.asByteData().setUint32(0, locktime, Endian.little),
     );
-    return hash256(buffer.toBytes()).toHex();
+    return hash256(buffer.toBytes()).reversed.toList().toHex();
   }
 
   Uint8List toBytes() {

@@ -9,6 +9,10 @@ String bytesToHex(Uint8List bytes) {
   return value.toRadixString(16).padLeft(bytes.length * 2, '0');
 }
 
+String ibytesToHex(List<int> bytes) {
+  return bytesToHex(Uint8List.fromList(bytes));
+}
+
 Uint8List hexToBytes(String hex) {
   if (hex.length % 2 != 0) {
     throw ArgumentError('Hex string must have an even length');
@@ -31,6 +35,11 @@ extension HexString on String {
 
 extension HexUint8List on Uint8List {
   String toHex() => bytesToHex(this);
+  Uint8List reverse() => Uint8List.fromList(reversed.toList());
+}
+
+extension HexIntList on List<int> {
+  String toHex() => ibytesToHex(this);
 }
 
 Uint8List randomBits(int bits) {

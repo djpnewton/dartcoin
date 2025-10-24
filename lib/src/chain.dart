@@ -61,7 +61,10 @@ class ChainManager {
        ) {
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
-    final genesisFilter = BasicBlockFilter(block: Block.genesisBlock(network));
+    final genesisFilter = BasicBlockFilter(
+      block: Block.genesisBlock(network),
+      prevOutputScripts: [],
+    );
     _genesisBlockFilterHeader = BasicBlockFilter.filterHeader(
       genesisFilter.filterHash,
       BasicBlockFilter.genesisPreviousHeader,
@@ -667,7 +670,7 @@ class ChainManager {
         continue; // skip this header
       }
       final headerHash = newChainHead.header.hash();
-      final headerHashReversed = reverseHash(headerHash);
+      final headerHashReversed = headerHash.reverse();
       if (verbose) {
         _log.info(
           'Received header: ${headerHashNice(headerHash)}, height: ${newChainHead.height}, time: ${newChainHead.header.time - newChainHead.previous!.header.time}s',
