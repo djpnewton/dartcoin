@@ -1,9 +1,10 @@
 import 'dart:convert';
 
-import 'package:logging/logging.dart';
 import 'package:http/http.dart' as http;
 
-final _log = Logger('CoreJsonRpc');
+import '../logc.dart';
+
+final _log = ColorLogger('CoreJsonRpc');
 
 class CoreBlockFilter {
   final String filter;

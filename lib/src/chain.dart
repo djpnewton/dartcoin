@@ -1,14 +1,13 @@
 import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
-
+import 'logc.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'block.dart';
 import 'block_filter.dart';
 import 'chain_store.dart';
 
-final _log = Logger('Chain');
+final _log = ColorLogger('Chain');
 
 enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 

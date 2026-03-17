@@ -2,8 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
-
+import 'logc.dart';
 import 'p2p_messages.dart';
 import 'block.dart';
 import 'block_filter.dart';
@@ -12,7 +11,7 @@ import 'utils.dart';
 import 'common.dart';
 import 'result.dart';
 
-final _log = Logger('Peer');
+final _log = ColorLogger('Peer');
 
 enum PeerStatus {
   connecting,
@@ -285,7 +284,8 @@ class Peer {
   void _doStatusChange(PeerStatus newStatus, PeerStatusChangeReason reason) {
     // TEMP:TODO: log status change/reason
     _log.info(
-      '\x1B[32mPeer status changed: $newStatus, Reason: $reason\x1B[0m',
+      'Peer status changed: $newStatus, Reason: $reason',
+      color: LogColor.brightBlue,
     );
     // sleep 1s
     sleep(Duration(seconds: 1));

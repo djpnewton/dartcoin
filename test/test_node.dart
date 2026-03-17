@@ -2,21 +2,13 @@
 
 import 'dart:io';
 
-import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import '../lib/src/bitcoin_core/core_process.dart';
 import '../lib/src/node.dart';
 import '../lib/src/peer.dart';
 import '../lib/src/common.dart';
-
-void initLogger() {
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((record) {
-    // ignore: avoid_print
-    print('${record.level.name}: ${record.time}: ${record.message}');
-  });
-}
+import '../lib/src/logc.dart';
 
 int _getTimestampOfGenesisInHeaderFile(Node node) {
   expect(File(node.blockHeadersFilePath).existsSync(), isTrue);
@@ -34,7 +26,7 @@ int _getTimestampOfGenesisInHeaderFile(Node node) {
 }
 
 void main() {
-  initLogger();
+  initGlobalLogger();
   final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
   final dummyAddr2 = 'mjcNxNEUrMs29U3wSdd7UZ54KGweZAehn6';
   late CoreProcess proc1;

@@ -3,19 +3,10 @@ import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
-import 'package:logging/logging.dart';
 
 import 'package:dartcoin/dartcoin.dart';
 
-final _log = Logger('main');
-
-void initLogger() {
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((record) {
-    // ignore: avoid_print
-    print('${record.level.name}: ${record.time}: ${record.message}');
-  });
-}
+final _log = ColorLogger('main');
 
 class KeyGenCommand extends Command<void> {
   @override
@@ -460,7 +451,7 @@ class TestP2pCommand extends Command<void> {
       'testnet4' => Network.testnet4,
       _ => throw ArgumentError('Invalid network type.'),
     };
-    _log.info('Network: ${network.name}');
+    _log.info('Network: ${network.name}', color: LogColor.brightBlue);
     final peerRaw = argResults?.option('peer');
     if (peerRaw != null) {
       final parts = peerRaw.split(':');
@@ -487,11 +478,11 @@ class TestP2pCommand extends Command<void> {
         : null;
 
     _log.info(
-      'Preferential Peering: $preferentialPeering, '
-          'Sync Block Headers: $syncBlockHeaders, '
-          'Sync Block Filter Headers: $syncBlockFilterHeaders, '
-          'Scan Addresses: $scanAddresses',
-      'Start Block: $startBlock',
+      'Preferential Peering: $preferentialPeering, ' 
+      'Sync Block Headers: $syncBlockHeaders, '
+      'Sync Block Filter Headers: $syncBlockFilterHeaders, '
+      'Scan Addresses: $scanAddresses'
+      'Start Block: $startBlock', color: LogColor.brightBlue
     );
 
     if (scanAddresses.isNotEmpty) {
@@ -952,7 +943,7 @@ class VerifyTxCommand extends Command<void> {
 }
 
 void main(List<String> args) {
-  initLogger();
+  initGlobalLogger();
 
   final runner =
       CommandRunner<void>(

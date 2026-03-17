@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
 import 'package:collection/collection.dart';
 
+import 'logc.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'chain.dart';
@@ -12,8 +12,9 @@ import 'block.dart';
 import 'peer.dart';
 import 'block_filter.dart';
 import 'address.dart';
+import 'wallet.dart';
 
-final _log = Logger('Node');
+final _log = ColorLogger('Node');
 
 class Node {
   final Network network;
@@ -31,6 +32,7 @@ class Node {
   Uint8List _requestingBlockFiltersCurrentTargetHash = Uint8List(0);
   int _requestingBlockFiltersCurrentTargetHeight = 0;
   List<Uint8List> interestingBlockHashes = [];
+  final Wallet wallet = Wallet();
 
   Node({
     required this.network,
@@ -272,15 +274,27 @@ class Node {
             if (scripts.any(
               (script) => listEquals(script, output.scriptPubKey),
             )) {
+              final vout = tx.outputs.indexOf(output);
+              final coin = Coin(
+                txid: tx.txid(),
+                vout: vout,
+                amount: output.value,
+              );
+              if (!wallet.coins.any((c) => c.outpoint == coin.outpoint)) {
+                wallet.addCoin(coin);
+              }
               if (verbose) {
-                _log.info('\x1B[31m');
                 _log.info(
                   'Found interesting transaction ${tx.txid()} with matching output script. +${output.value} sats',
                 );
                 _log.info(
-                  'coin details [txid:vout:amount]: ${tx.txid()}:${tx.outputs.indexOf(output)}:${output.value}',
+                  'coin details [txid:vout:amount]: ${tx.txid()}:$vout:${output.value}',
+                  color: LogColor.brightGreen,
                 );
-                _log.info('\x1B[0m');
+                _log.info(
+                  'wallet: totalReceived=${wallet.totalReceived}sat, balance=${wallet.balance}sat',
+                  color: LogColor.brightBlue,
+                );
               }
             }
           }
@@ -295,9 +309,18 @@ class Node {
               (script) =>
                   listEquals(script, prevTx.outputs[input.vout].scriptPubKey),
             )) {
+              wallet.spendCoin(prevTx.txid(), input.vout);
               if (verbose) {
                 _log.info(
-                  '\x1B[31mFound interesting transaction ${tx.txid()} with matching input script. -${prevTx.outputs[input.vout].value} sats \x1B[0m',
+                  'Found interesting transaction ${tx.txid()} with matching input script. -${prevTx.outputs[input.vout].value} sats',
+                );
+                _log.info(
+                  'coin details [txid:vout:amount]: ${prevTx.txid()}:${input.vout}:${prevTx.outputs[input.vout].value}',
+                  color: LogColor.brightRed,
+                );
+                _log.info(
+                  'wallet: totalReceived=${wallet.totalReceived}sat, balance=${wallet.balance}sat',
+                  color: LogColor.brightBlue,
                 );
               }
             }
@@ -360,7 +383,10 @@ class Node {
           }
           // show interesting block hashes
           for (final hash in interestingBlockHashes) {
-            _log.info('Interesting block hash: ${hash.reverse().toHex()}');
+            _log.info(
+              'Interesting block hash: ${hash.reverse().toHex()}',
+              color: LogColor.brightMagenta,
+            );
           }
           if (interestingBlockHashes.isNotEmpty) {
             peer.requestBlocks(

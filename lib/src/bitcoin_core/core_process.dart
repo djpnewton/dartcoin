@@ -1,10 +1,9 @@
 import 'dart:io';
 
-import 'package:logging/logging.dart';
-
+import '../logc.dart';
 import 'core_rpc.dart';
 
-final _log = Logger('CoreProcess');
+final _log = ColorLogger('CoreProcess');
 
 Future<void> _processCleanup(
   Process? process,

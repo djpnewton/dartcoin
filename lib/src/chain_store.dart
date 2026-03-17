@@ -1,12 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
-
+import 'logc.dart';
 import 'block.dart';
 import 'utils.dart';
 
-final _log = Logger('ChainStore');
+final _log = ColorLogger('ChainStore');
 
 abstract class Node<Self extends Node<Self>> {
   Self? previous;
