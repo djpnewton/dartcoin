@@ -5,12 +5,14 @@ export 'src/base58.dart';
 export 'src/bech32.dart';
 export 'src/common.dart';
 export 'src/keys.dart';
+export 'src/logc.dart';
 export 'src/mnemonic.dart';
 export 'src/secp256k1.dart';
 export 'src/script.dart';
 export 'src/sign_tx.dart';
 export 'src/sign_verify.dart';
 export 'src/utils.dart';
+export 'src/wallet.dart';
 export 'src/wif.dart';
 export 'src/transaction.dart';
 

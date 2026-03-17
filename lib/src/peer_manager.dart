@@ -1,12 +1,11 @@
 import 'dart:async';
 
-import 'package:logging/logging.dart';
-
+import 'logc.dart';
 import 'common.dart';
 import 'peer.dart';
 import 'p2p_messages.dart';
 
-final _log = Logger('PeerManager');
+final _log = ColorLogger('PeerManager');
 
 class PeerCandidate {
   final String ip;
@@ -46,6 +45,8 @@ class PeerManager {
       network: network,
       onStatusChange: _peerStatusChange,
       onAddresses: _peerAddressesReceived,
+      onBlockReceived: null,
+      onBlockFilterReceived: null,
       verbose: verbose,
     );
     peer.connect();

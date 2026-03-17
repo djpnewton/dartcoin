@@ -187,7 +187,7 @@ Uint8List _segwitPreimageHash(
   // 2) hash prevouts (txid + vout for all inputs)
   final prevoutsBytes = tx.inputs.expand((input) {
     final voutBytes = ByteData(4)..setUint32(0, input.vout, Endian.little);
-    return [...input.txid, ...voutBytes.buffer.asUint8List()];
+    return [...input.txidRaw, ...voutBytes.buffer.asUint8List()];
   }).toList();
   final prevoutsHash = hash256(Uint8List.fromList(prevoutsBytes));
 
@@ -202,7 +202,7 @@ Uint8List _segwitPreimageHash(
   final voutBytes = ByteData(4)
     ..setUint32(0, tx.inputs[inputIndex].vout, Endian.little);
   final prevoutBytes = [
-    ...tx.inputs[inputIndex].txid,
+    ...tx.inputs[inputIndex].txidRaw,
     ...voutBytes.buffer.asUint8List(),
   ];
 

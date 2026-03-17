@@ -1,10 +1,80 @@
 import 'dart:io';
 
-import 'package:logging/logging.dart';
-
+import '../logc.dart';
 import 'core_rpc.dart';
 
-final _log = Logger('CoreProcess');
+final _log = ColorLogger('CoreProcess');
+
+const lockName = 'dartcoin_core_process_lock';
+
+/// Port registry to catch tests that accidentally start multiple CoreProcess instances with the same ports,
+/// which would cause conflicts. Uses a file in the temp directory so the registry is shared across
+/// processes and isolates.
+class CoreProcessPortRegistry {
+  static final String _registryPath =
+      '${Directory.systemTemp.path}/dartcoin_port_registry.txt';
+  static final String _lockPath =
+      '${Directory.systemTemp.path}/dartcoin_port_registry.lock';
+
+  static void _withLock(void Function() fn) {
+    final lockFile = File(_lockPath);
+    final raf = lockFile.openSync(mode: FileMode.write);
+    try {
+      raf.lockSync(FileLock.exclusive);
+      fn();
+    } finally {
+      raf.unlockSync();
+      raf.closeSync();
+    }
+  }
+
+  static Set<int> _readPorts() {
+    final file = File(_registryPath);
+    if (!file.existsSync()) return {};
+    final lines = file.readAsLinesSync();
+    return lines
+        .where((l) => l.trim().isNotEmpty)
+        .map((l) => int.parse(l.trim()))
+        .toSet();
+  }
+
+  static void _writePorts(Set<int> ports) {
+    final file = File(_registryPath);
+    file.writeAsStringSync(ports.map((p) => '$p').join('\n'));
+  }
+
+  static void registerPort(int port) {
+    _withLock(() {
+      final ports = _readPorts();
+      if (ports.contains(port)) {
+        throw StateError(
+          'Port $port is already in use by another CoreProcess instance',
+        );
+      }
+      ports.add(port);
+      _writePorts(ports);
+    });
+  }
+
+  static void deregisterPort(int port) {
+    _withLock(() {
+      final ports = _readPorts();
+      ports.remove(port);
+      _writePorts(ports);
+    });
+  }
+
+  static void removeRegistry() {
+    final lockFile = File(_lockPath);
+    if (lockFile.existsSync()) {
+      lockFile.deleteSync();
+    }
+    final file = File(_registryPath);
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+  }
+}
 
 Future<void> _processCleanup(
   Process? process,
@@ -59,8 +129,10 @@ class CoreProcess {
     int rpcPort = 18443,
   }) {
     // init p2p
+    CoreProcessPortRegistry.registerPort(p2pPort);
     _p2pPort = p2pPort;
     // init rpc
+    CoreProcessPortRegistry.registerPort(rpcPort);
     _rpcPort = rpcPort;
     _rpc = CoreJsonRpc(port: _rpcPort);
     if (verbose) {
@@ -195,5 +267,7 @@ class CoreProcess {
     _process = null;
     _processFinalizer.detach(this);
     _coreInitialized = false;
+    CoreProcessPortRegistry.deregisterPort(_p2pPort);
+    CoreProcessPortRegistry.deregisterPort(_rpcPort);
   }
 }

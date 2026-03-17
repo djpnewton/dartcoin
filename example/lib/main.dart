@@ -3,19 +3,10 @@ import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
-import 'package:logging/logging.dart';
 
 import 'package:dartcoin/dartcoin.dart';
 
-final _log = Logger('main');
-
-void initLogger() {
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((record) {
-    // ignore: avoid_print
-    print('${record.level.name}: ${record.time}: ${record.message}');
-  });
-}
+final _log = ColorLogger('main');
 
 class KeyGenCommand extends Command<void> {
   @override
@@ -439,14 +430,14 @@ class TestP2pCommand extends Command<void> {
       defaultsTo: true,
     );
     argParser.addMultiOption(
-      'scan-addresses',
+      'wallet-addresses',
       abbr: 'a',
-      help: 'Scan for addresses in block filters.',
+      help: 'Scan for wallet addresses in block filters.',
     );
     argParser.addOption(
-      'start-block',
+      'birthday-block',
       abbr: 's',
-      help: 'The starting block to use for scanning addresses.',
+      help: 'The starting block to use for scanning wallet addresses.',
     );
   }
 
@@ -460,7 +451,7 @@ class TestP2pCommand extends Command<void> {
       'testnet4' => Network.testnet4,
       _ => throw ArgumentError('Invalid network type.'),
     };
-    _log.info('Network: ${network.name}');
+    _log.info('Network: ${network.name}', color: LogColor.brightBlue);
     final peerRaw = argResults?.option('peer');
     if (peerRaw != null) {
       final parts = peerRaw.split(':');
@@ -479,22 +470,22 @@ class TestP2pCommand extends Command<void> {
     final syncBlockHeaders = argResults?.flag('sync-block-headers') ?? true;
     final syncBlockFilterHeaders =
         argResults?.flag('sync-block-filter-headers') ?? true;
-    final scanAddresses =
-        argResults?.multiOption('scan-addresses') ?? <String>[];
-    final startBlockRaw = argResults?.option('start-block');
-    int? startBlock = startBlockRaw != null
-        ? int.tryParse(startBlockRaw)
+    final walletAddresses =
+        argResults?.multiOption('wallet-addresses') ?? <String>[];
+    final birthdayBlockRaw = argResults?.option('birthday-block');
+    int? birthdayBlock = birthdayBlockRaw != null
+        ? int.tryParse(birthdayBlockRaw)
         : null;
 
     _log.info(
-      'Preferential Peering: $preferentialPeering, '
-          'Sync Block Headers: $syncBlockHeaders, '
-          'Sync Block Filter Headers: $syncBlockFilterHeaders, '
-          'Scan Addresses: $scanAddresses',
-      'Start Block: $startBlock',
+      'Preferential Peering: $preferentialPeering, ' 
+      'Sync Block Headers: $syncBlockHeaders, '
+      'Sync Block Filter Headers: $syncBlockFilterHeaders, '
+      'Wallet Addresses: $walletAddresses'
+      'Birthday Block: $birthdayBlock', color: LogColor.brightBlue
     );
 
-    if (scanAddresses.isNotEmpty) {
+    if (walletAddresses.isNotEmpty) {
       if (!syncBlockHeaders) {
         _log.severe(
           'Block headers must be synced (--sync-block-headers) when scanning addresses.',
@@ -507,9 +498,9 @@ class TestP2pCommand extends Command<void> {
         );
         return;
       }
-      if (startBlock == null) {
+      if (birthdayBlock == null) {
         _log.severe(
-          'Starting block must be provided (--start-block) when scanning addresses.',
+          'Birthday block must be provided (--birthday-block) when scanning addresses.',
         );
         return;
       }
@@ -540,8 +531,10 @@ class TestP2pCommand extends Command<void> {
       verbose: true,
       syncBlockFilterHeaders: syncBlockFilterHeaders,
       syncBlockHeaders: syncBlockHeaders,
-      //scanAddresses: scanAddresses,
-      //startBlock: startBlock,
+      wallet: walletAddresses.isNotEmpty
+          ? Wallet(addresses: walletAddresses, birthdayBlock: birthdayBlock, txProvider: BlockDnTxProvider(network))
+          : null,
+      txProvider: BlockDnTxProvider(network),
     );
     node.add(peer: peer);
   }
@@ -715,12 +708,12 @@ class CreateTxCommand extends Command<void> {
       if (vout == null || vout < 0) {
         throw ArgumentError('Invalid vout number: ${parts[1]} in coin: $coin');
       }
-      return TxIn(txid: txid.toBytes().reverse(), vout: vout, scriptSig: Uint8List(0), sequence: 0xFFFFFFFF);
+      return TxIn(txid: txid, vout: vout, scriptSig: Uint8List(0), sequence: 0xFFFFFFFF);
     }).toList();
     // sum input amounts
     var totalInputAmount = 0;
     for (var input in inputs) {
-      final inputTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final inputTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       final inputAmount = inputTx.outputs[input.vout].value;
       totalInputAmount += inputAmount;
     }
@@ -847,7 +840,7 @@ class SignTxCommand extends Command<void> {
     List<TxOut> previousOutputs = [];
     List<PrivateKey> privKeys = [];
     for (var input in tx.inputs) {
-      final prevTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final prevTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       prevTxs.add(prevTx);
       final prevOutput = prevTx.outputs[input.vout];
       previousOutputs.add(prevOutput);
@@ -870,12 +863,12 @@ class SignTxCommand extends Command<void> {
         final childPubKeyHash = hash160(childPubKey);
         if (listEquals(childPubKeyHash, pubkeyHash)) {
           foundKey = childKey;
-          _log.info('Found matching private key for input ${bytesToHex(input.txid.reverse())}:${input.vout} at index $i');
+          _log.info('Found matching private key for input ${input.txid}:${input.vout} at index $i');
           break;
         }
       }
       if (foundKey == null) {
-        _log.info('No matching private key found for input ${bytesToHex(input.txid.reverse())}:${input.vout} in the first 100 child keys. Cannot sign this transaction.');
+        _log.info('No matching private key found for input ${input.txid}:${input.vout} in the first 100 child keys. Cannot sign this transaction.');
         return;
       }
       privKeys.add(foundKey);
@@ -941,7 +934,7 @@ class VerifyTxCommand extends Command<void> {
     // get the prev outputs for the inputs
     List<TxOut> previousOutputs = [];
     for (var input in tx.inputs) {
-      final prevTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final prevTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       final prevOutput = prevTx.outputs[input.vout];
       previousOutputs.add(prevOutput);
     }
@@ -952,7 +945,7 @@ class VerifyTxCommand extends Command<void> {
 }
 
 void main(List<String> args) {
-  initLogger();
+  initGlobalLogger();
 
   final runner =
       CommandRunner<void>(

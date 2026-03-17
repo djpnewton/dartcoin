@@ -2,21 +2,14 @@
 
 import 'dart:io';
 
-import 'package:logging/logging.dart';
 import 'package:test/test.dart';
 
 import '../lib/src/bitcoin_core/core_process.dart';
+import '../lib/src/block_filter.dart';
 import '../lib/src/node.dart';
 import '../lib/src/peer.dart';
 import '../lib/src/common.dart';
-
-void initLogger() {
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((record) {
-    // ignore: avoid_print
-    print('${record.level.name}: ${record.time}: ${record.message}');
-  });
-}
+import '../lib/src/logc.dart';
 
 int _getTimestampOfGenesisInHeaderFile(Node node) {
   expect(File(node.blockHeadersFilePath).existsSync(), isTrue);
@@ -34,7 +27,7 @@ int _getTimestampOfGenesisInHeaderFile(Node node) {
 }
 
 void main() {
-  initLogger();
+  initGlobalLogger();
   final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
   final dummyAddr2 = 'mjcNxNEUrMs29U3wSdd7UZ54KGweZAehn6';
   late CoreProcess proc1;
@@ -58,7 +51,7 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(network: Network.regtest, dataDir: nodeDataDir);
+    node = Node(network: Network.regtest, dataDir: nodeDataDir, txProvider: RegtestTxProvider(proc1));
   });
   tearDown(() async {
     // shutdown the node
@@ -90,7 +83,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.blockFilterHeaderSynced,
+      PeerStatus.blockFilterGetLatestBlock,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first
@@ -161,7 +154,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.blockFilterHeaderSynced,
+      PeerStatus.blockFilterGetLatestBlock,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first

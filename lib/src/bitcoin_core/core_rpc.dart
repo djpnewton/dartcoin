@@ -1,9 +1,10 @@
 import 'dart:convert';
 
-import 'package:logging/logging.dart';
 import 'package:http/http.dart' as http;
 
-final _log = Logger('CoreJsonRpc');
+import '../logc.dart';
+
+final _log = ColorLogger('CoreJsonRpc');
 
 class CoreBlockFilter {
   final String filter;
@@ -171,8 +172,13 @@ class CoreJsonRpc {
   // raw transaction RPCs
   //
 
-  Future<String> sendRawTransaction(String hexTx) async {
-    final response = await call('sendrawtransaction', [hexTx]);
+  Future<String> getRawTransaction(String txid) async {
+    final response = await call('getrawtransaction', [txid]);
+    return response['result'] as String;
+  }
+
+  Future<String> sendRawTransaction(String txHex) async {
+    final response = await call('sendrawtransaction', [txHex]);
     return response['result'] as String;
   }
 

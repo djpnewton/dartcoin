@@ -1,14 +1,13 @@
 import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
-
+import 'logc.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'block.dart';
 import 'block_filter.dart';
 import 'chain_store.dart';
 
-final _log = Logger('Chain');
+final _log = ColorLogger('Chain');
 
 enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 
@@ -26,6 +25,7 @@ class ChainManager {
   late final Uint8List _genesisBlockFilterHeader;
   final Map<int, Uint8List> _blockHeaderHeightIndex = {};
   final Map<int, Uint8List> _blockFilterHeaderHeightIndex = {};
+  final TxProvider txProvider;
   // block headers
   late ChainEntry _bestChainHead;
   final List<ChainEntry> _chainHeads = [];
@@ -35,12 +35,14 @@ class ChainManager {
   late BlockFilterHeaderEntry _bestBlockFilterHead;
   BlockFilterHeaderEntry? _fileBlockFilterHead;
   final BlockFilterHeaderStore _blockFilterHeaderStore;
-
+  // block filters (GCS)
+  final BlockFilterStore _blockFilterStore;
   // public getters
   bool get activeChain => _activeChain;
   ChainEntry get bestChainHead => _bestChainHead;
   BlockFilterHeaderEntry get bestBlockFilterHead => _bestBlockFilterHead;
   List<ChainEntry> get chainHeads => _chainHeads;
+  int? get maxStoredFilterHeight => _blockFilterStore.writeHead;
   List<Uint8List> get recentBlockHeadersHashes {
     return _blockHeadersTake(
       _bestChainHead,
@@ -54,11 +56,14 @@ class ChainManager {
     required this.network,
     required String blockHeadersFilePath,
     required String blockFilterHeadersFilePath,
+    required String blockFiltersFilePath,
+    required this.txProvider,
     this.verbose = false,
   }) : _blockHeaderStore = BlockHeaderStore(blockHeadersFilePath),
        _blockFilterHeaderStore = BlockFilterHeaderStore(
          blockFilterHeadersFilePath,
-       ) {
+       ),
+       _blockFilterStore = BlockFilterStore(blockFiltersFilePath) {
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
     final genesisFilter = BasicBlockFilter(
@@ -75,6 +80,12 @@ class ChainManager {
     _chainHeads.add(_bestChainHead);
     _bestBlockFilterHead = _initBestBlockFilterHeaderHead(network);
     _updateBlockFilterHeaderHeightIndex();
+    // block filters – write head is initialised from file inside BlockFilterStore
+    if (verbose && _blockFilterStore.writeHead != null) {
+      _log.info(
+        'Loaded stored block filters up to height ${_blockFilterStore.writeHead}',
+      );
+    }
   }
 
   BigInt _minumumChainWork(Network network) {
@@ -656,6 +667,23 @@ class ChainManager {
     final initialBest = _bestChainHead;
     var headersAdded = 0;
     for (final header in headers) {
+      // check if header is already is a head
+      bool isAHead = false;
+      for (final chainHead in _chainHeads) {
+        if (compareHashes(chainHead.header.hash(), header.hash())) {
+          isAHead = true;
+          headersAdded++;
+          break;
+        }
+      }
+      if (isAHead) {
+        if (verbose) {
+          _log.info(
+            'Received header (${headerHashNice(header.hash())}) is already a chainhead, skipping',
+          );
+        }
+        continue; // skip this header
+      }
       // create new chainhead from block header
       final newChainHead = _findNewChainHead(
         header,
@@ -833,8 +861,109 @@ class ChainManager {
     _activeChain = false;
   }
 
-  bool hasValidFilterChain() {
-    //TODO: recreate filter and check if it agrees with the peer
+  /// Buffer a received block filter. Call [flushBlockFilters] to persist.
+  /// [blockHash] is the little-endian hash from the `cfilter` message.
+  void addBlockFilter(Uint8List blockHash, Uint8List filterBytes) {
+    int height;
+    try {
+      height = _bestChainHead.getAtHash(blockHash).height;
+    } catch (e) {
+      _log.warning(
+        'addBlockFilter: cannot find height for block hash ${blockHash.reverse().toHex()}: $e',
+      );
+      return;
+    }
+    _blockFilterStore.add(
+      BlockFilterEntry(
+        height: height,
+        blockHash: blockHash,
+        filterBytes: filterBytes,
+      ),
+    );
+  }
+
+  /// Flush all buffered filters to disk in a single batch write.
+  void flushBlockFilters() {
+    try {
+      _blockFilterStore.flush();
+      if (verbose) {
+        _log.info(
+          'Flushed block filters up to height ${_blockFilterStore.writeHead}',
+        );
+      }
+    } catch (e) {
+      _log.warning('flushBlockFilters: failed: $e');
+    }
+  }
+
+  /// Replay stored filters from [fromHeight] upward, calling [callback] for each.
+  /// Useful on startup to re-scan already-downloaded filters against wallet addresses.
+  void replayStoredFilters(
+    int fromHeight,
+    void Function(int height, Uint8List blockHash, Uint8List filterBytes)
+    callback,
+  ) {
+    final entries = _blockFilterStore.readFrom(fromHeight);
+    if (verbose) {
+      _log.info(
+        'Replaying ${entries.length} stored block filters from height $fromHeight',
+      );
+    }
+    for (final entry in entries) {
+      callback(entry.height, entry.blockHash, entry.filterBytes);
+    }
+  }
+
+  Future<bool> hasValidFilterChain(Block block, int blockHeight) async {
+    // get the  current and previous filter header
+    if (bestBlockFilterHead.height < blockHeight) {
+      _log.warning(
+        '_chainManager bestBlockFilterHead height is less than requested block number',
+      );
+      return false;
+    }
+    var bfhNode = bestBlockFilterHead;
+    while (bfhNode.height > blockHeight) {
+      if (bfhNode.previous == null) {
+        _log.warning(
+          '_chainManager bestBlockFilterHead previous is null while traversing to requested block number',
+        );
+        return false;
+      }
+      bfhNode = bfhNode.previous!;
+    }
+    final currentFilterHeader = bfhNode.header;
+    if (bfhNode.previous == null) {
+      _log.warning(
+        '_chainManager bestBlockFilterHead previous is null for requested block number',
+      );
+      return false;
+    }
+    final previousFilterHeader = bfhNode.previous!.header;
+    // get the block inputs to create the filter
+    final prevOutputScripts = await BasicBlockFilter.prevOutputScripts(
+      block,
+      txProvider,
+    );
+    // create the block filter
+    final blockFilter = BasicBlockFilter(
+      block: block,
+      prevOutputScripts: prevOutputScripts,
+    );
+    // verify the filter header
+    final expectedFilterHeader = BasicBlockFilter.filterHeader(
+      blockFilter.filterHash,
+      previousFilterHeader,
+    );
+    if (!listEquals(expectedFilterHeader, currentFilterHeader)) {
+      _log.warning(
+        'Block filter header mismatch for block at height $blockHeight: expected ${currentFilterHeader.toHex()}, got ${expectedFilterHeader.toHex()}',
+      );
+      return false;
+    }
+    if (verbose) {
+      _log.info('Block filter verified for block at height $blockHeight');
+    }
     return true;
   }
 }

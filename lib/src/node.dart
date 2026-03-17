@@ -1,25 +1,37 @@
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:logging/logging.dart';
 import 'package:collection/collection.dart';
 
+import 'logc.dart';
 import 'common.dart';
 import 'utils.dart';
 import 'chain.dart';
 import 'chain_store.dart';
 import 'block.dart';
 import 'peer.dart';
+import 'block_filter.dart';
+import 'wallet.dart';
 
-final _log = Logger('Node');
+final _log = ColorLogger('Node');
 
 class Node {
   final Network network;
   final List<Peer> _peers = [];
   late final String _dataDir;
   late final ChainManager _chainManager;
+  late final FullBlockStore _blockStore;
   final bool verbose;
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
+  final Wallet? wallet;
+  final TxProvider txProvider;
+  late final int? _startBlock = wallet?.birthdayBlock;
+
+  int _requestingBestBlockNumber = 0;
+  Uint8List _requestingBestBlockHash = Uint8List(0);
+  Uint8List _requestingBlockFiltersCurrentTargetHash = Uint8List(0);
+  int _requestingBlockFiltersCurrentTargetHeight = 0;
 
   Node({
     required this.network,
@@ -27,14 +39,30 @@ class Node {
     this.verbose = false,
     this.syncBlockHeaders = true,
     this.syncBlockFilterHeaders = true,
+    this.wallet,
+    required this.txProvider,
   }) {
+    assert(
+      !(syncBlockFilterHeaders && !syncBlockHeaders),
+      'Cannot sync block filter headers without syncing block headers',
+    );
+    assert(
+      !(wallet != null &&
+          wallet!.addresses.isNotEmpty &&
+          !syncBlockFilterHeaders),
+      'Cannot scan addresses without syncing block filter headers',
+    );
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
+    // initialize the block store
+    _blockStore = FullBlockStore(_dataDir, verbose: verbose);
     // initialize the chain manager
     _chainManager = ChainManager(
       network: network,
       blockHeadersFilePath: blockHeadersFilePath,
       blockFilterHeadersFilePath: blockFilterHeadersFilePath,
+      blockFiltersFilePath: blockFiltersFilePath,
+      txProvider: txProvider,
       verbose: verbose,
     );
   }
@@ -57,12 +85,18 @@ class Node {
     return dataDir;
   }
 
+  String get blocksDirPath => '$_dataDir/blocks';
+
   String get blockHeadersFilePath {
     return '$_dataDir/headers.csv';
   }
 
   String get blockFilterHeadersFilePath {
     return '$_dataDir/filter_headers.csv';
+  }
+
+  String get blockFiltersFilePath {
+    return '$_dataDir/filters.csv';
   }
 
   void _peerStatusChange(
@@ -157,16 +191,27 @@ class Node {
       case PeerStatus.blockFilterHeaderSyncing:
         break;
       case PeerStatus.blockFilterHeaderSynced:
-        if (!_chainManager.hasValidFilterChain()) {
+        if (_chainManager.bestChainHead.height !=
+            _chainManager.bestBlockFilterHead.height) {
           _log.warning(
-            'Invalid block filter headers from peer ${peer.ip}:${peer.port}',
+            '_chainManager Block filter header height does not match block header height',
           );
-          peer.disconnect();
-          _peers.remove(peer);
-          // TODO:
-          //  - connect to another peer
-          //  - reset the chain
+          return;
         }
+        // start getting latest block
+        _requestingBestBlockHash = _chainManager.bestChainHead.header.hash();
+        _requestingBestBlockNumber = _chainManager.bestChainHead.height;
+        peer.requestBlocks([
+          _requestingBestBlockHash,
+        ], PeerStatus.blockFilterGetLatestBlock);
+        break;
+      case PeerStatus.blockFilterGetLatestBlock:
+        break;
+      case PeerStatus.blockFilterSyncing:
+        break;
+      case PeerStatus.blockFilterSynced:
+        break;
+      case PeerStatus.getInterestingBlocks:
         break;
       case PeerStatus.disconnected:
         _peers.remove(peer);
@@ -176,14 +221,161 @@ class Node {
     }
   }
 
+  Future<void> _peerBlockReceived(Peer peer, Block block) async {
+    if (verbose) {
+      _log.info(
+        'Block received from peer ${peer.ip}:${peer.port}, block hash: ${block.header.hashNice()}',
+      );
+    }
+    if (peer.status == PeerStatus.blockFilterGetLatestBlock) {
+      // check if this is the requested block
+      if (listEquals(block.header.hash(), _requestingBestBlockHash)) {
+        if (verbose) {
+          _log.info(
+            'Received requested best block ${block.header.hashNice()} at height $_requestingBestBlockNumber from peer ${peer.ip}:${peer.port}',
+          );
+        }
+        if (await _chainManager.hasValidFilterChain(
+          block,
+          _requestingBestBlockNumber,
+        )) {
+          if (_startBlock == null) return;
+
+          // 1) Replay already-stored filters so interestingBlockHashes is populated
+          //    for blocks we downloaded on a previous run.
+          _chainManager.replayStoredFilters(_startBlock, (
+            height,
+            blockHash,
+            filterBytes,
+          ) {
+            final filter = BasicBlockFilter.fromBytes(filterBytes: filterBytes);
+            wallet?.processBlockFilter(
+              blockHash,
+              filter,
+              network,
+              verbose: verbose,
+            );
+          });
+
+          // 2) Decide where to resume downloading.
+          final resumeFrom = (_chainManager.maxStoredFilterHeight != null)
+              ? _chainManager.maxStoredFilterHeight! + 1
+              : _startBlock;
+
+          if (resumeFrom > _chainManager.bestChainHead.height) {
+            // All filters already stored – request interesting blocks directly.
+            if (verbose) {
+              _log.info(
+                'All block filters already stored up to height ${_chainManager.maxStoredFilterHeight}, requesting interesting blocks',
+              );
+            }
+            final interesting = wallet?.interestingBlockHashes ?? [];
+            if (interesting.isNotEmpty) {
+              peer.requestBlocks(interesting, PeerStatus.getInterestingBlocks);
+            }
+            return;
+          }
+
+          // 3) Request remaining filters from resumeFrom.
+          if (verbose) {
+            _log.info(
+              'Resuming block filter download from height $resumeFrom (stored up to ${_chainManager.maxStoredFilterHeight ?? 'none'})',
+            );
+          }
+          final targetHeight =
+              _chainManager.bestChainHead.height < resumeFrom + 500
+              ? _chainManager.bestChainHead.height
+              : resumeFrom + 500;
+          final targetHash = _chainManager.bestChainHead
+              .getAt(targetHeight)
+              .header
+              .hash();
+          _requestingBlockFiltersCurrentTargetHash = targetHash;
+          _requestingBlockFiltersCurrentTargetHeight = targetHeight;
+          peer.syncBlockFilters(resumeFrom, targetHash);
+        }
+      }
+    } else if (peer.status == PeerStatus.getInterestingBlocks) {
+      if (verbose) {
+        _log.info(
+          'Received block ${block.header.hashNice()} from peer ${peer.ip}:${peer.port}, delegating to wallet',
+        );
+      }
+      await wallet?.processBlock(block, network, verbose: verbose);
+    }
+  }
+
+  void _peerBlockFilterReceived(
+    Peer peer,
+    Uint8List blockHash,
+    BasicBlockFilter filter,
+  ) {
+    if (verbose) {
+      _log.info('Block filter received from peer ${peer.ip}:${peer.port}');
+    }
+    wallet?.processBlockFilter(blockHash, filter, network, verbose: verbose);
+
+    if (peer.status == PeerStatus.blockFilterSyncing) {
+      // check if we need to request more filters
+      if (compareHashes(blockHash, _requestingBlockFiltersCurrentTargetHash)) {
+        if (verbose) {
+          _log.info(
+            'Reached target block filter hash: ${blockHash.reverse().toHex()}',
+          );
+        }
+        _chainManager.flushBlockFilters();
+        final startHeight = _requestingBlockFiltersCurrentTargetHeight + 1;
+        final targetHeight =
+            _chainManager.bestChainHead.height <
+                _requestingBlockFiltersCurrentTargetHeight + 500
+            ? _chainManager.bestChainHead.height
+            : _requestingBlockFiltersCurrentTargetHeight + 500;
+        final targetHash = _chainManager.bestChainHead
+            .getAt(targetHeight)
+            .header
+            .hash();
+        _requestingBlockFiltersCurrentTargetHash = targetHash;
+        if (targetHeight == _chainManager.bestChainHead.height) {
+          if (verbose) {
+            _log.info('Completed block filter sync at height $targetHeight');
+          }
+          final interestingBlockHashes = wallet?.interestingBlockHashes ?? [];
+          for (final hash in interestingBlockHashes) {
+            _log.info(
+              'Interesting block hash: ${hash.reverse().toHex()}',
+              color: LogColor.brightMagenta,
+            );
+          }
+          if (interestingBlockHashes.isNotEmpty) {
+            peer.requestBlocks(
+              interestingBlockHashes,
+              PeerStatus.getInterestingBlocks,
+            );
+          }
+          return;
+        }
+        if (verbose) {
+          _log.info(
+            'Requesting more block filters from height $_requestingBlockFiltersCurrentTargetHeight, target hash: ${targetHash.reverse().toHex()}',
+          );
+        }
+        _requestingBlockFiltersCurrentTargetHeight = targetHeight;
+        peer.syncBlockFilters(startHeight, targetHash);
+      }
+    }
+  }
+
   void connect({required String ip, required int port}) async {
     final peer = Peer(
       ip: ip,
       port: port,
       network: network,
       onStatusChange: _peerStatusChange,
+      onBlockReceived: _peerBlockReceived,
+      onBlockFilterReceived: _peerBlockFilterReceived,
       onAddresses: null,
       verbose: verbose,
+      blockStore: _blockStore,
     );
     _peers.add(peer);
     peer.connect();
@@ -202,6 +394,9 @@ class Node {
     }
     peer.setPeerStatusChangeCallback(_peerStatusChange);
     peer.setAddressesCallback(null);
+    peer.setBlockReceivedCallback(_peerBlockReceived);
+    peer.setBlockFilterReceivedCallback(_peerBlockFilterReceived);
+    peer.setBlockStoreCallback(_blockStore);
     _peers.add(peer);
     // manually trigger status change to handshakeComplete
     _peerStatusChange(peer, PeerStatus.handshakeComplete, peer.status);
