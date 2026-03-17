@@ -8,6 +8,7 @@ import 'utils.dart';
 import 'siphash.dart';
 import 'bits.dart';
 import 'common.dart';
+import 'bitcoin_core/core_process.dart';
 
 abstract class TxProvider {
   Future<Transaction> fromTxid(String txid);
@@ -62,6 +63,43 @@ class BlockDnTxProvider implements TxProvider {
     // cache and return the transaction
     _txMap[txid] = tx;
     return tx;
+  }
+}
+
+class RegtestTxProvider implements TxProvider {
+  late final Map<String, Transaction> _txMap;
+  late final CoreProcess _coreProcess;
+
+  RegtestTxProvider(this._coreProcess) {
+    _txMap = {};
+  }
+
+  @override
+  Future<Transaction> fromTxid(String txid) async {
+    final tx = _txMap[txid] ?? await _fetchTx(txid);
+    if (tx == null) {
+      throw Exception(
+        'Transaction with txid $txid not found in RegtestTxProvider',
+      );
+    }
+    if (tx.txid() != txid) {
+      throw Exception(
+        'Fetched transaction txid mismatch: expected $txid, got ${tx.txid()}',
+      );
+    }
+    return tx;
+  }
+
+  Future<Transaction?> _fetchTx(String txid) async {
+    try {
+      final rawHex = await _coreProcess.rpc.getRawTransaction(txid);
+      final rawBytes = hexToBytes(rawHex);
+      final tx = Transaction.fromBytes(rawBytes);
+      _txMap[txid] = tx;
+      return tx;
+    } catch (e) {
+      return null;
+    }
   }
 }
 
@@ -221,7 +259,7 @@ class BasicBlockFilter {
       if (i == 0) continue; // skip coinbase
       final tx = block.transactions[i];
       for (final input in tx.inputs) {
-        final prevTxid = input.txid.reversed.toList().toHex();
+        final prevTxid = input.txid;
         final spentTx =
             txCache[prevTxid] ?? await txProvider.fromTxid(prevTxid);
         txCache[prevTxid] = spentTx;

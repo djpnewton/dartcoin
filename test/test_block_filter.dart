@@ -9,6 +9,7 @@ import '../lib/src/block.dart';
 import '../lib/src/transaction.dart';
 import '../lib/src/utils.dart';
 import '../lib/src/common.dart';
+import '../lib/src/bitcoin_core/core_process.dart';
 
 import 'vectors/bip158_vectors.dart';
 
@@ -245,5 +246,21 @@ void main() {
       filter2067.match(testnet4Block2067.header.hash(), [Uint8List(0), Uint8List(32)]),
       isFalse,
     );
+  });
+
+  test('test RegtestTxProvider', () async {
+    final proc = CoreProcess(verbose: false, p2pPort: 18744, rpcPort: 18743);
+    await proc.start();
+    await proc.waitTillInitialized();
+    final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
+    final blockHashes = await proc.rpc.generateToAddress(1, dummyAddr1);
+    final blockHash = blockHashes.first;
+    final blockHex = await proc.rpc.getBlock(blockHash, 0);
+    final block = Block.fromBytes(hexToBytes(blockHex));
+    final txid = block.transactions.first.txid();
+    final txProvider = RegtestTxProvider(proc);
+    final tx = await txProvider.fromTxid(txid);
+    expect(tx.txid(), equals(txid));
+    await proc.stop();
   });
 }

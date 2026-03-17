@@ -210,6 +210,16 @@ class Message {
               MessageCfHeaders.fromBytes(result.value.payload),
               result.value,
             );
+          case 'getcfilters':
+            return (
+              MessageGetCFilters.fromBytes(result.value.payload),
+              result.value,
+            );
+          case 'cfilter':
+            return (
+              MessageCFilter.fromBytes(result.value.payload),
+              result.value,
+            );
           //TODO: more message types
           default:
             return (
@@ -1031,6 +1041,103 @@ class MessageCfHeaders extends Message {
       stopHash: stopHash,
       previousFilterHeader: previousFilterHash,
       filterHashes: filterHashes,
+    );
+  }
+}
+
+class MessageGetCFilters extends Message {
+  int filterType;
+  int startHeight;
+  Uint8List stopHash;
+
+  MessageGetCFilters({
+    required this.filterType,
+    required this.startHeight,
+    required this.stopHash,
+  }) {
+    if (stopHash.length != 32) {
+      throw ArgumentError('Stop hash must be 32 bytes long');
+    }
+  }
+
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add([filterType]);
+    payload.add(
+      Uint8List(4)
+        ..buffer.asByteData().setUint32(0, startHeight, Endian.little),
+    );
+    payload.add(stopHash);
+    final msgHeader = MessageHeader(
+      command: 'getcfilters',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
+  }
+
+  factory MessageGetCFilters.fromBytes(Uint8List bytes) {
+    if (bytes.length != 37) {
+      throw FormatException(
+        'GetCFilters message bytes must be exactly 37 bytes long',
+      );
+    }
+    final filterType = bytes[0];
+    final startHeight = bytes.buffer.asByteData().getUint32(1, Endian.little);
+    final stopHash = bytes.sublist(5, 37);
+    return MessageGetCFilters(
+      filterType: filterType,
+      startHeight: startHeight,
+      stopHash: stopHash,
+    );
+  }
+}
+
+class MessageCFilter extends Message {
+  int filterType;
+  Uint8List blockHash;
+  Uint8List filterBytes;
+
+  MessageCFilter({
+    required this.filterType,
+    required this.blockHash,
+    required this.filterBytes,
+  }) {
+    if (blockHash.length != 32) {
+      throw ArgumentError('Block hash must be 32 bytes long');
+    }
+  }
+
+  Uint8List toBytes(Network network) {
+    final payload = BytesBuilder();
+    payload.add([filterType]);
+    payload.add(blockHash);
+    payload.add(compactSize(filterBytes.length));
+    payload.add(filterBytes);
+    final msgHeader = MessageHeader(
+      command: 'cfilter',
+      payload: payload.toBytes(),
+    );
+    return msgHeader.toBytes(network);
+  }
+
+  factory MessageCFilter.fromBytes(Uint8List bytes) {
+    if (bytes.length < 34) {
+      throw FormatException(
+        'CFilter message bytes must be at least 34 bytes long',
+      );
+    }
+    final filterType = bytes[0];
+    final blockHash = bytes.sublist(1, 33);
+    final cspr = compactSizeParse(bytes.sublist(33));
+    final offset = 33 + cspr.bytesRead;
+    if (offset + cspr.value > bytes.length) {
+      throw FormatException('Filter bytes exceeds remaining bytes');
+    }
+    final filterBytes = bytes.sublist(offset, offset + cspr.value);
+    return MessageCFilter(
+      filterType: filterType,
+      blockHash: blockHash,
+      filterBytes: filterBytes,
     );
   }
 }
