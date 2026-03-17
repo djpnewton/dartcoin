@@ -11,10 +11,14 @@ void main() {
   test('bytesToHex() converts bytes to hex string', () {
     var bytes = Uint8List.fromList([0x12, 0x34, 0x56, 0x78]);
     expect(bytesToHex(bytes), equals('12345678'));
+    bytes = Uint8List(0);
+    expect(bytesToHex(bytes), equals(''));
   });
   test('ibytesToHex() converts int list to hex string', () {
     var bytes = [0x12, 0x34, 0x56, 0x78];
     expect(ibytesToHex(bytes), equals('12345678'));
+    bytes = [];
+    expect(ibytesToHex(bytes), equals(''));
   });
   test('hexToBytes() converts hex string to bytes', () {
     var hex = '12345678';

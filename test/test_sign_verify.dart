@@ -93,7 +93,7 @@ void main() {
   });
   test('derSign()', () {
     var msg = utf8.encode('hello world');
-    var der = derSign(masterKey, msg);
+    var der = derSignMessage(masterKey, msg);
     expect(
       der.signature,
       equals(
@@ -103,7 +103,7 @@ void main() {
       ),
     );
     msg = utf8.encode('the quick brown fox jumps over the lazy dog');
-    der = derSign(masterKey, msg);
+    der = derSignMessage(masterKey, msg);
     expect(
       der.signature,
       equals(
@@ -115,7 +115,7 @@ void main() {
     msg = utf8.encode(
       'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
     );
-    der = derSign(masterKey, msg);
+    der = derSignMessage(masterKey, msg);
     expect(
       der.signature,
       equals(
@@ -134,13 +134,13 @@ void main() {
       '3045022100866b281b99f14fd6d45697cdbc2429f86da140b4dee7f39fa2056e087e2fb4ae022000fc4ce1e6d2ea8f7d2b13a9b26acce7649c16657789f3d51db9b4d8b81efb31',
     );
     expect(
-      derVerify(PublicKey.fromPublicKey(publicKey), msg, derSignature),
+      derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, derSignature),
       isTrue,
     );
     // test with wrong message
     var msgWrong = utf8.encode('hello world!');
     expect(
-      derVerify(PublicKey.fromPublicKey(publicKey), msgWrong, derSignature),
+      derVerifyMessage(PublicKey.fromPublicKey(publicKey), msgWrong, derSignature),
       isFalse,
     );
     // test with wrong signature
@@ -148,7 +148,7 @@ void main() {
       derSignature.sublist(0, derSignature.length - 1) + [0x00],
     );
     expect(
-      derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       isFalse,
     );
     // test with wrong public key
@@ -156,7 +156,7 @@ void main() {
       publicKey.sublist(0, publicKey.length - 1) + [0x00],
     );
     expect(
-      derVerify(PublicKey.fromPublicKey(wrongPublicKey), msg, derSignature),
+      derVerifyMessage(PublicKey.fromPublicKey(wrongPublicKey), msg, derSignature),
       isFalse,
     );
     //
@@ -180,7 +180,7 @@ void main() {
       derSignature.sublist(0, derSignature.length - 1),
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -194,7 +194,7 @@ void main() {
       [0x31, length] + derSignature.sublist(2),
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -208,7 +208,7 @@ void main() {
       [prefix, length, 0x03, rLength] + derSignature.sublist(4),
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -222,7 +222,7 @@ void main() {
       [prefix, length, rPrefix, 0x22] + derSignature.sublist(4),
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -238,7 +238,7 @@ void main() {
           derSignature.sublist(4 + rLength + 1),
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -253,7 +253,7 @@ void main() {
           [sPrefix, 0x21, ...sValue],
     );
     expect(
-      () => derVerify(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
+      () => derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, wrongSignature),
       throwsA(
         predicate(
           (e) =>
@@ -274,7 +274,7 @@ void main() {
       ...sValue,
     ]);
     expect(
-      derVerify(PublicKey.fromPublicKey(publicKey), msg, correctSignature),
+      derVerifyMessage(PublicKey.fromPublicKey(publicKey), msg, correctSignature),
       isTrue,
     );
   });
@@ -284,7 +284,7 @@ void main() {
         bigIntToBytes(v.privateKey, minLength: 32),
       );
       final msg = utf8.encode(v.message);
-      final der = derSign(masterKey, msg);
+      final der = derSignMessage(masterKey, msg);
       expect(
         der.signature,
         equals(v.sigDERDeterministic),
@@ -298,7 +298,7 @@ void main() {
         bigIntToBytes(v.privateKey, minLength: 32),
       );
       final msg = utf8.encode(v.message);
-      final der = derSign(masterKey, msg);
+      final der = derSignMessage(masterKey, msg);
       expect(
         der.signature,
         equals(v.sigDERDeterministic),

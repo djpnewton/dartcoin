@@ -97,12 +97,9 @@ class CoreJsonRpc {
     return response['result'] as String;
   }
 
-  Future<Map<String, dynamic>> getBlock(
-    String blockHash, [
-    int? verbosity,
-  ]) async {
+  Future<String> getBlock(String blockHash, [int? verbosity]) async {
     final response = await call('getblock', [blockHash, verbosity]);
-    return response['result'] as Map<String, dynamic>;
+    return response['result'] as String;
   }
 
   Future<Map<String, dynamic>> getBlockchainInfo() async {
@@ -150,9 +147,11 @@ class CoreJsonRpc {
   // generating RPCs
   //
 
-  Future<List<dynamic>> generateToAddress(int nblocks, String address) async {
+  Future<List<String>> generateToAddress(int nblocks, String address) async {
     final response = await call('generatetoaddress', [nblocks, address]);
-    return response['result'] as List<dynamic>;
+    return (response['result'] as List<dynamic>)
+        .map<String>((dynamic hash) => hash as String)
+        .toList();
   }
 
   //
@@ -166,6 +165,15 @@ class CoreJsonRpc {
   Future<List<dynamic>> getPeerInfo() async {
     final response = await call('getpeerinfo');
     return response['result'] as List<dynamic>;
+  }
+
+  //
+  // raw transaction RPCs
+  //
+
+  Future<String> sendRawTransaction(String hexTx) async {
+    final response = await call('sendrawtransaction', [hexTx]);
+    return response['result'] as String;
   }
 
   //

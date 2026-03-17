@@ -11,9 +11,9 @@ class BitsWriter {
     _bits.add(bit);
   }
 
-  void writeBits(int value, int count) {
+  void writeBits(BigInt value, int count) {
     for (int i = count - 1; i >= 0; i--) {
-      _bits.add((value & (1 << i)) != 0);
+      _bits.add((value & (BigInt.one << i)) != BigInt.zero);
     }
   }
 

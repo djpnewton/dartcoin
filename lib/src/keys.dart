@@ -325,23 +325,59 @@ class PublicKey {
     final prefix = switch (network) {
       Network.mainnet => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['xpub']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xpub generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['ypub']!,
         ScriptType.p2wpkh => _prefixDict['zpub']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xpub generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xpub generation for Taproot is not implemented yet',
+        ),
       },
       Network.testnet => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tpub']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xpub generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['upub']!,
         ScriptType.p2wpkh => _prefixDict['vpub']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xpub generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xpub generation for Taproot is not implemented yet',
+        ),
       },
       Network.testnet4 => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tpub']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xpub generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['upub']!,
         ScriptType.p2wpkh => _prefixDict['vpub']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xpub generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xpub generation for Taproot is not implemented yet',
+        ),
       },
       Network.regtest => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tpub']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xpub generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['upub']!,
         ScriptType.p2wpkh => _prefixDict['vpub']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xpub generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xpub generation for Taproot is not implemented yet',
+        ),
       },
     };
     final depthHex = depth.toRadixString(16).padLeft(2, '0');
@@ -374,8 +410,17 @@ class PublicKey {
     // Return the address in the specified format
     return switch (scriptType) {
       ScriptType.p2pkh => p2pkhAddress(publicKey, network: network),
+      ScriptType.p2sh => throw UnimplementedError(
+        'P2SH address generation is not implemented yet',
+      ),
       ScriptType.p2shP2wpkh => p2shP2wpkhAddress(publicKey, network: network),
       ScriptType.p2wpkh => p2wpkhAddress(publicKey, network: network),
+      ScriptType.p2wsh => throw UnimplementedError(
+        'P2WSH address generation is not implemented yet',
+      ),
+      ScriptType.p2tr => throw UnimplementedError(
+        'Taproot address generation is not implemented yet',
+      ),
     };
   }
 
@@ -634,23 +679,59 @@ class PrivateKey extends PublicKey {
     final prefix = switch (network) {
       Network.mainnet => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['xprv']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xprv generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['yprv']!,
         ScriptType.p2wpkh => _prefixDict['zprv']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xprv generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xprv generation for Taproot is not implemented yet',
+        ),
       },
       Network.testnet => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tprv']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xprv generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['uprv']!,
         ScriptType.p2wpkh => _prefixDict['vprv']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xprv generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xprv generation for Taproot is not implemented yet',
+        ),
       },
       Network.testnet4 => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tprv']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xprv generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['uprv']!,
         ScriptType.p2wpkh => _prefixDict['vprv']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xprv generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xprv generation for Taproot is not implemented yet',
+        ),
       },
       Network.regtest => switch (scriptType) {
         ScriptType.p2pkh => _prefixDict['tprv']!,
+        ScriptType.p2sh => throw UnimplementedError(
+          'xprv generation for P2SH is not implemented yet',
+        ),
         ScriptType.p2shP2wpkh => _prefixDict['uprv']!,
         ScriptType.p2wpkh => _prefixDict['vprv']!,
+        ScriptType.p2wsh => throw UnimplementedError(
+          'xprv generation for P2WSH is not implemented yet',
+        ),
+        ScriptType.p2tr => throw UnimplementedError(
+          'xprv generation for Taproot is not implemented yet',
+        ),
       },
     };
     final depthHex = depth.toRadixString(16).padLeft(2, '0');

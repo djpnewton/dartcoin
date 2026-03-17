@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -41,6 +40,11 @@ class BlockDnTxProvider implements TxProvider {
     if (tx == null) {
       throw Exception(
         'Transaction with txid $txid not found in BlockDnTxProvider',
+      );
+    }
+    if (tx.txid() != txid) {
+      throw Exception(
+        'Fetched transaction txid mismatch: expected $txid, got ${tx.txid()}',
       );
     }
     return tx;
@@ -107,36 +111,91 @@ class BasicBlockFilter {
     // sort the items
     hashedItems.sort((BigInt a, BigInt b) => a.compareTo(b));
     // convert to list of differences
-    final differences = <int>[];
+    final differences = <BigInt>[];
     for (int i = 0; i < hashedItems.length; i++) {
-      final value = hashedItems[i].toInt();
+      final value = hashedItems[i];
       if (i == 0) {
         differences.add(value);
       } else {
-        differences.add(value - hashedItems[i - 1].toInt());
+        differences.add(value - hashedItems[i - 1]);
       }
     }
-    // for each difference, calculate the quotient and remainder after dividing by 2^P
-    // we will use these values to construct the filter
-    final twoP = pow(2, P).toInt();
+    // golomb encode the differences
     final filter = BitsWriter();
     for (final d in differences) {
-      final quotient = (d / twoP).floor();
-      final remainder = d - (twoP * quotient);
-      // add the quotient and remainder to the filter bytes
-      for (int i = 0; i < quotient; i++) {
-        filter.writeBit(true);
-      }
-      filter.writeBit(false);
-      filter.writeBits(remainder, P);
+      golombEncode(filter, d, P);
     }
     // final filter bytes has 'n' as compactSize followed by the filter bits
     final bb = BytesBuilder()
       ..add(compactSize(n))
       ..add(filter.toBytes());
     filterBytes = bb.toBytes();
-    // calculate the filter header
+    // calculate the filter hash
     filterHash = hash256(filterBytes);
+  }
+
+  BasicBlockFilter.fromBytes({required this.filterBytes}) {
+    filterHash = hash256(filterBytes);
+  }
+
+  void golombEncode(BitsWriter filter, BigInt value, int p) {
+    // calculate the quotient and remainder after dividing by 2^P
+    final twoP = BigInt.two.pow(p);
+    final quotient = (value / twoP).floor();
+    final remainder = value - (twoP * BigInt.from(quotient));
+    for (int i = 0; i < quotient; i++) {
+      filter.writeBit(true);
+    }
+    filter.writeBit(false);
+    filter.writeBits(remainder, p);
+  }
+
+  BigInt golombDecode(BitsReader filter, int p) {
+    // read the quotient and remainder
+    final twoP = BigInt.two.pow(p);
+    BigInt quotient = BigInt.zero;
+    while (filter.readBit()) {
+      quotient += BigInt.one;
+    }
+    final remainder = BigInt.from(filter.readBits(p));
+    return (quotient * twoP) + remainder;
+  }
+
+  bool match(Uint8List blockHash, List<Uint8List> scripts) {
+    // get the key for the block
+    final key = Uint8List.fromList(blockHash.take(16).toList());
+    // read the compact size 'n' from the filter bytes
+    final cspr = compactSizeParse(filterBytes);
+    final n = cspr.value;
+    // filter is remaining bytes after compact size
+    final filter = BitsReader(filterBytes.sublist(cspr.bytesRead));
+    // hash the scripts to the range [0, N*M)
+    final hashedItems = <BigInt>[];
+    final f = BigInt.from(n) * BigInt.from(M);
+    for (final script in scripts) {
+      hashedItems.add((siphash(script, key) * f) >> 64);
+    }
+    // sort the hashed items
+    hashedItems.sort((BigInt a, BigInt b) => a.compareTo(b));
+    // now we need to check if any of the hashed items are in the filter
+    BigInt filterItem = BigInt.zero;
+    for (int i = 0; i < n; i++) {
+      // read next item from filter
+      final diff = golombDecode(filter, P);
+      filterItem += diff;
+      // compare with hashed items
+      for (int j = 0; j < hashedItems.length; j++) {
+        final hashedItem = hashedItems[j];
+        if (hashedItem == filterItem) {
+          return true; // match found
+        }
+        // since the set is sorted if filterItem > all hashedItems we can stop
+        if (j == hashedItems.length - 1 && filterItem > hashedItem) {
+          return false;
+        }
+      }
+    }
+    return false;
   }
 
   static Uint8List filterHeader(
@@ -164,8 +223,7 @@ class BasicBlockFilter {
       for (final input in tx.inputs) {
         final prevTxid = input.txid.reversed.toList().toHex();
         final spentTx =
-            txCache[prevTxid] ??
-            await txProvider.fromTxid(input.txid.reversed.toList().toHex());
+            txCache[prevTxid] ?? await txProvider.fromTxid(prevTxid);
         txCache[prevTxid] = spentTx;
         final output = spentTx.outputs[input.vout];
         scripts.add(output.scriptPubKey);
