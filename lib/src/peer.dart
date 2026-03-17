@@ -7,6 +7,7 @@ import 'p2p_messages.dart';
 import 'block.dart';
 import 'block_filter.dart';
 import 'chain.dart';
+import 'chain_store.dart';
 import 'utils.dart';
 import 'common.dart';
 import 'result.dart';
@@ -173,6 +174,7 @@ class Peer {
   Socket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
+  FullBlockStore? _blockStore;
   Timer? _bfHeadersTimer;
   int _bfHeadersTimeoutCount = 0;
   int? _serviceFlags;
@@ -193,10 +195,12 @@ class Peer {
     required PeerBlockReceivedEvent? onBlockReceived,
     required PeerBlockFilterReceivedEvent? onBlockFilterReceived,
     required this.verbose,
+    FullBlockStore? blockStore,
   }) : _onStatusChange = onStatusChange,
        _onAddresses = onAddresses,
        _onBlockReceived = onBlockReceived,
-       _onBlockFilterReceived = onBlockFilterReceived;
+       _onBlockFilterReceived = onBlockFilterReceived,
+       _blockStore = blockStore;
 
   void setPeerStatusChangeCallback(PeerStatusEvent callback) {
     // set the callback for status changes
@@ -216,6 +220,10 @@ class Peer {
   void setBlockFilterReceivedCallback(PeerBlockFilterReceivedEvent? callback) {
     // set the callback for receiving block filters
     _onBlockFilterReceived = callback;
+  }
+
+  void setBlockStoreCallback(FullBlockStore? blockStore) {
+    _blockStore = blockStore;
   }
 
   static int defaultPort(Network network) {
@@ -546,6 +554,8 @@ class Peer {
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
+      // Store every arriving block.
+      _blockStore?.store(message.block);
       if (_onBlockReceived != null) {
         _onBlockReceived!(this, message.block);
       }
@@ -916,17 +926,33 @@ class Peer {
       );
       return;
     }
-    _requestedBlocks.addRequestedBlocks(blockHashes);
     _doStatusChange(targetStatus, PeerStatusChangeReason.requestBlocksCalled);
+    // Serve any already-cached blocks immediately.
+    final uncached = <Uint8List>[];
+    for (final hash in blockHashes) {
+      final cached = _blockStore?.read(hash);
+      if (cached != null) {
+        if (verbose) {
+          _log.info(
+            'Serving cached block from store: ${hash.reverse().toHex()}',
+          );
+        }
+        _onBlockReceived?.call(this, cached);
+      } else {
+        uncached.add(hash);
+      }
+    }
+    if (uncached.isEmpty) return;
+    _requestedBlocks.addRequestedBlocks(uncached);
     final socket = _socket!;
     if (verbose) {
       _log.info(
-        '>>>>>: $ip:$port, GetData - Blocks: ${blockHashes.map((hash) => hash.reverse().toHex()).join(', ')}',
+        '>>>>>: $ip:$port, GetData - Blocks: ${uncached.map((hash) => hash.reverse().toHex()).join(', ')}',
       );
     }
     socket.add(
       MessageGetData(
-        inventory: blockHashes
+        inventory: uncached
             .map(
               (hash) => InventoryItem(type: InventoryType.msgBlock, hash: hash),
             )

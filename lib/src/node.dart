@@ -20,6 +20,7 @@ class Node {
   final List<Peer> _peers = [];
   late final String _dataDir;
   late final ChainManager _chainManager;
+  late final FullBlockStore _blockStore;
   final bool verbose;
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
@@ -49,6 +50,8 @@ class Node {
     );
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
+    // initialize the block store
+    _blockStore = FullBlockStore(_dataDir, verbose: verbose);
     // initialize the chain manager
     _chainManager = ChainManager(
       network: network,
@@ -76,6 +79,8 @@ class Node {
     }
     return dataDir;
   }
+
+  String get blocksDirPath => '$_dataDir/blocks';
 
   String get blockHeadersFilePath {
     return '$_dataDir/headers.csv';
@@ -368,6 +373,7 @@ class Node {
       onBlockFilterReceived: _peerBlockFilterReceived,
       onAddresses: null,
       verbose: verbose,
+      blockStore: _blockStore,
     );
     _peers.add(peer);
     peer.connect();
@@ -388,6 +394,7 @@ class Node {
     peer.setAddressesCallback(null);
     peer.setBlockReceivedCallback(_peerBlockReceived);
     peer.setBlockFilterReceivedCallback(_peerBlockFilterReceived);
+    peer.setBlockStoreCallback(_blockStore);
     _peers.add(peer);
     // manually trigger status change to handshakeComplete
     _peerStatusChange(peer, PeerStatus.handshakeComplete, peer.status);
