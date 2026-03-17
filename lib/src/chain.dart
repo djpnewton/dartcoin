@@ -34,12 +34,14 @@ class ChainManager {
   late BlockFilterHeaderEntry _bestBlockFilterHead;
   BlockFilterHeaderEntry? _fileBlockFilterHead;
   final BlockFilterHeaderStore _blockFilterHeaderStore;
-
+  // block filters (GCS)
+  final BlockFilterStore _blockFilterStore;
   // public getters
   bool get activeChain => _activeChain;
   ChainEntry get bestChainHead => _bestChainHead;
   BlockFilterHeaderEntry get bestBlockFilterHead => _bestBlockFilterHead;
   List<ChainEntry> get chainHeads => _chainHeads;
+  int? get maxStoredFilterHeight => _blockFilterStore.writeHead;
   List<Uint8List> get recentBlockHeadersHashes {
     return _blockHeadersTake(
       _bestChainHead,
@@ -53,11 +55,13 @@ class ChainManager {
     required this.network,
     required String blockHeadersFilePath,
     required String blockFilterHeadersFilePath,
+    required String blockFiltersFilePath,
     this.verbose = false,
   }) : _blockHeaderStore = BlockHeaderStore(blockHeadersFilePath),
        _blockFilterHeaderStore = BlockFilterHeaderStore(
          blockFilterHeadersFilePath,
-       ) {
+       ),
+       _blockFilterStore = BlockFilterStore(blockFiltersFilePath) {
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
     final genesisFilter = BasicBlockFilter(
@@ -74,6 +78,10 @@ class ChainManager {
     _chainHeads.add(_bestChainHead);
     _bestBlockFilterHead = _initBestBlockFilterHeaderHead(network);
     _updateBlockFilterHeaderHeightIndex();
+    // block filters – write head is initialised from file inside BlockFilterStore
+    if (verbose && _blockFilterStore.writeHead != null) {
+      _log.info('Loaded stored block filters up to height ${_blockFilterStore.writeHead}');
+    }
   }
 
   BigInt _minumumChainWork(Network network) {
@@ -847,6 +855,55 @@ class ChainManager {
       throw StateError('Cannot deactivate already deactivated chain');
     }
     _activeChain = false;
+  }
+
+  /// Buffer a received block filter. Call [flushBlockFilters] to persist.
+  /// [blockHash] is the little-endian hash from the `cfilter` message.
+  void addBlockFilter(Uint8List blockHash, Uint8List filterBytes) {
+    int height;
+    try {
+      height = _bestChainHead.getAtHash(blockHash).height;
+    } catch (e) {
+      _log.warning(
+        'addBlockFilter: cannot find height for block hash ${blockHash.reverse().toHex()}: $e',
+      );
+      return;
+    }
+    _blockFilterStore.add(BlockFilterEntry(
+      height: height,
+      blockHash: blockHash,
+      filterBytes: filterBytes,
+    ));
+  }
+
+  /// Flush all buffered filters to disk in a single batch write.
+  void flushBlockFilters() {
+    try {
+      _blockFilterStore.flush();
+      if (verbose) {
+        _log.info('Flushed block filters up to height ${_blockFilterStore.writeHead}');
+      }
+    } catch (e) {
+      _log.warning('flushBlockFilters: failed: $e');
+    }
+  }
+
+  /// Replay stored filters from [fromHeight] upward, calling [callback] for each.
+  /// Useful on startup to re-scan already-downloaded filters against wallet addresses.
+  void replayStoredFilters(
+    int fromHeight,
+    void Function(int height, Uint8List blockHash, Uint8List filterBytes)
+    callback,
+  ) {
+    final entries = _blockFilterStore.readFrom(fromHeight);
+    if (verbose) {
+      _log.info(
+        'Replaying ${entries.length} stored block filters from height $fromHeight',
+      );
+    }
+    for (final entry in entries) {
+      callback(entry.height, entry.blockHash, entry.filterBytes);
+    }
   }
 
   Future<bool> hasValidFilterChain(Block block, int blockHeight) async {

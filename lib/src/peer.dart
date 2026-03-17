@@ -715,13 +715,8 @@ class Peer {
         );
         return;
       }
-      // TODO: add the block filter to the chain manager
-      /*
-      chainManager.addBlockFilter(
-        message.blockHash,
-        BasicBlockFilter.fromBytes(message.filterBytes),
-      );
-      */
+      // Store the filter in the chain manager.
+      chainManager.addBlockFilter(message.blockHash, message.filterBytes);
 
       if (_onBlockFilterReceived != null) {
         _onBlockFilterReceived!(

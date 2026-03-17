@@ -67,6 +67,18 @@ class BlockFilterHeaderEntry extends Node<BlockFilterHeaderEntry> {
   });
 }
 
+class BlockFilterEntry {
+  final int height;
+  final Uint8List blockHash;
+  final Uint8List filterBytes;
+
+  BlockFilterEntry({
+    required this.height,
+    required this.blockHash,
+    required this.filterBytes,
+  });
+}
+
 abstract class ChainStore {
   final String _filePath;
   final bool verbose;
@@ -276,6 +288,112 @@ class BlockFilterHeaderStore extends ChainStore {
     );
     if (verbose) {
       _log.info('Block filter headers appended to file: $_filePath');
+    }
+  }
+}
+
+/// Stores raw BIP-158 block filters (GCS) on disk.
+///
+/// CSV format:  height,blockHash,filterBytes
+/// Heights are stored in ascending sequential order starting from the first
+/// recorded height (the wallet birthday block).
+///
+/// [writeHead] tracks the height of the last written entry (O(1) gap checks).
+class BlockFilterStore extends ChainStore {
+  final List<BlockFilterEntry> entries = [];
+  int? _writeHead;
+
+  BlockFilterStore(super.filePath) {
+    _writeHead = _scanWriteHead();
+  }
+
+  /// Height of the last flushed filter, or null if nothing stored yet.
+  int? get writeHead => _writeHead;
+
+  /// Append a filter to the in-memory list.
+  /// Skips entries already on disk or already in the list (duplicate guard).
+  void add(BlockFilterEntry entry) {
+    if (_writeHead != null && entry.height <= _writeHead!) return;
+    if (entries.isNotEmpty && entry.height <= entries.last.height) return;
+    entries.add(entry);
+  }
+
+  int? _scanWriteHead() {
+    if (!exists() || empty()) return null;
+    final lines = File(_filePath).readAsLinesSync();
+    for (var i = lines.length - 1; i >= 0; i--) {
+      final entry = _parseLine(lines[i]);
+      if (entry != null) return entry.height;
+    }
+    return null;
+  }
+
+  String _entryToLine(BlockFilterEntry e) =>
+      '${e.height.toString().padLeft(7, '0')},${e.blockHash.toHex()},${e.filterBytes.toHex()}';
+
+  BlockFilterEntry? _parseLine(String line) {
+    if (line.startsWith('height,') || line.isEmpty) return null;
+    final fields = line.split(',');
+    if (fields.length != 3) return null;
+    final height = int.tryParse(fields[0]);
+    if (height == null) return null;
+    return BlockFilterEntry(
+      height: height,
+      blockHash: fields[1].toBytes(),
+      filterBytes: fields[2].toBytes(),
+    );
+  }
+
+  /// Read all stored filters at or above [fromHeight].
+  List<BlockFilterEntry> readFrom(int fromHeight) {
+    if (!exists() || empty()) return [];
+    final result = <BlockFilterEntry>[];
+    for (final line in File(_filePath).readAsLinesSync()) {
+      final entry = _parseLine(line);
+      if (entry != null && entry.height >= fromHeight) {
+        result.add(entry);
+      }
+    }
+    return result;
+  }
+
+  /// Flush all entries above [writeHead] to disk in a single syscall.
+  /// Creates the file on first call; appends sequentially thereafter.
+  void flush() {
+    final toWrite = _writeHead == null
+        ? entries
+        : entries.where((e) => e.height > _writeHead!).toList();
+    if (toWrite.isEmpty) return;
+    final file = File(_filePath);
+    final buf = StringBuffer();
+    if (!file.existsSync()) {
+      file.createSync(recursive: true);
+      buf.write('height,blockHash,filterBytes\n');
+      for (final e in toWrite) buf.write('${_entryToLine(e)}\n');
+      file.writeAsStringSync(buf.toString());
+      _writeHead = toWrite.last.height;
+      if (verbose) {
+        _log.info(
+          'Block filter file created: $_filePath '
+          '(heights ${toWrite.first.height}-${toWrite.last.height})',
+        );
+      }
+      return;
+    }
+    final expected = _writeHead == null ? null : _writeHead! + 1;
+    if (expected != null && toWrite.first.height != expected) {
+      throw StateError(
+        'BlockFilterStore.flush: expected height $expected, '
+        'got ${toWrite.first.height} - non-sequential write rejected',
+      );
+    }
+    for (final e in toWrite) buf.write('${_entryToLine(e)}\n');
+    file.writeAsStringSync(buf.toString(), mode: FileMode.append);
+    _writeHead = toWrite.last.height;
+    if (verbose) {
+      _log.info(
+        'Block filters appended: heights ${toWrite.first.height}-${toWrite.last.height}',
+      );
     }
   }
 }

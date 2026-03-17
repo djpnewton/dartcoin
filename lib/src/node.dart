@@ -54,6 +54,7 @@ class Node {
       network: network,
       blockHeadersFilePath: blockHeadersFilePath,
       blockFilterHeadersFilePath: blockFilterHeadersFilePath,
+      blockFiltersFilePath: blockFiltersFilePath,
       verbose: verbose,
     );
   }
@@ -82,6 +83,10 @@ class Node {
 
   String get blockFilterHeadersFilePath {
     return '$_dataDir/filter_headers.csv';
+  }
+
+  String get blockFiltersFilePath {
+    return '$_dataDir/filters.csv';
   }
 
   void _peerStatusChange(
@@ -224,20 +229,63 @@ class Node {
           block,
           _requestingBestBlockNumber,
         )) {
-          final walletStartBlock = _startBlock;
-          if (walletStartBlock == null) return;
-          // start syncing block filters from wallet.startBlock
+          if (_startBlock == null) return;
+
+          // 1) Replay already-stored filters so interestingBlockHashes is populated
+          //    for blocks we downloaded on a previous run.
+          _chainManager.replayStoredFilters(
+            _startBlock,
+            (height, blockHash, filterBytes) {
+              final filter =
+                  BasicBlockFilter.fromBytes(filterBytes: filterBytes);
+              wallet?.processBlockFilter(
+                blockHash,
+                filter,
+                network,
+                verbose: verbose,
+              );
+            },
+          );
+
+          // 2) Decide where to resume downloading.
+          final resumeFrom = (_chainManager.maxStoredFilterHeight != null)
+              ? _chainManager.maxStoredFilterHeight! + 1
+              : _startBlock;
+
+          if (resumeFrom > _chainManager.bestChainHead.height) {
+            // All filters already stored – request interesting blocks directly.
+            if (verbose) {
+              _log.info(
+                'All block filters already stored up to height ${_chainManager.maxStoredFilterHeight}, requesting interesting blocks',
+              );
+            }
+            final interesting = wallet?.interestingBlockHashes ?? [];
+            if (interesting.isNotEmpty) {
+              peer.requestBlocks(
+                interesting,
+                PeerStatus.getInterestingBlocks,
+              );
+            }
+            return;
+          }
+
+          // 3) Request remaining filters from resumeFrom.
+          if (verbose) {
+            _log.info(
+              'Resuming block filter download from height $resumeFrom (stored up to ${_chainManager.maxStoredFilterHeight ?? 'none'})',
+            );
+          }
           final targetHeight =
-              _chainManager.bestChainHead.height < walletStartBlock + 500
+              _chainManager.bestChainHead.height < resumeFrom + 500
               ? _chainManager.bestChainHead.height
-              : walletStartBlock + 500;
+              : resumeFrom + 500;
           final targetHash = _chainManager.bestChainHead
               .getAt(targetHeight)
               .header
               .hash();
           _requestingBlockFiltersCurrentTargetHash = targetHash;
           _requestingBlockFiltersCurrentTargetHeight = targetHeight;
-          peer.syncBlockFilters(walletStartBlock, targetHash);
+          peer.syncBlockFilters(resumeFrom, targetHash);
         }
       }
     } else if (peer.status == PeerStatus.getInterestingBlocks) {
@@ -268,6 +316,7 @@ class Node {
             'Reached target block filter hash: ${blockHash.reverse().toHex()}',
           );
         }
+        _chainManager.flushBlockFilters();
         final startHeight = _requestingBlockFiltersCurrentTargetHeight + 1;
         final targetHeight =
             _chainManager.bestChainHead.height <
