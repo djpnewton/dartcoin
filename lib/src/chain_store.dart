@@ -10,29 +10,59 @@ final _log = Logger('ChainStore');
 
 abstract class Node<Self extends Node<Self>> {
   Self? previous;
-  Node({this.previous});
+  int height;
+  Node({this.previous, required this.height});
 }
 
 class ChainEntry extends Node<ChainEntry> {
-  int height;
   BlockHeader header;
   BigInt work;
   BigInt chainWork;
   int timeCreated = DateTime.now().millisecondsSinceEpoch;
   ChainEntry({
-    required this.height,
+    required super.height,
     required this.header,
     required this.work,
     required this.chainWork,
     super.previous,
   });
+
+  ChainEntry getAt(int targetHeight) {
+    var current = this;
+    while (current.height > targetHeight) {
+      if (current.previous == null) {
+        throw StateError(
+          'No node found at height $targetHeight, reached genesis at height ${current.height}',
+        );
+      }
+      current = current.previous!;
+    }
+    if (current.height != targetHeight) {
+      throw StateError(
+        'No node found at height $targetHeight, stopped at height ${current.height}',
+      );
+    }
+    return current;
+  }
+
+  ChainEntry getAtHash(Uint8List targetHash) {
+    var current = this;
+    while (!listEquals(current.header.hash(), targetHash)) {
+      if (current.previous == null) {
+        throw StateError(
+          'No node found with hash ${targetHash.toHex()}, reached genesis at height ${current.height}',
+        );
+      }
+      current = current.previous!;
+    }
+    return current;
+  }
 }
 
 class BlockFilterHeaderEntry extends Node<BlockFilterHeaderEntry> {
-  int height;
   Uint8List header;
   BlockFilterHeaderEntry({
-    required this.height,
+    required super.height,
     required this.header,
     super.previous,
   });

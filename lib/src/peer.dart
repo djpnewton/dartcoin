@@ -23,10 +23,26 @@ enum PeerStatus {
   blockHeadersSynced,
   blockFilterHeaderSyncing,
   blockFilterHeaderSynced,
+  blockFilterGetLatestBlock,
+  blockFilterSyncing,
+  blockFilterSynced,
+  getInterestingBlocks,
   disconnected,
 }
 
 enum PeerStatusChangeReason {
+  socketConnectSuccess,
+  socketConnectFailed,
+  verackMessageReceived,
+  headersMessageLessThanMax,
+  cfHeadersMessageStopHashReachedBestChainHead,
+  disconnectCalled,
+  syncBlockHeadersCalled,
+  syncBlockFilterHeadersCalled,
+  syncBlockFilterHeadersCalledButAlreadySynced,
+  requestAddrsCalled,
+  requestBlocksCalled,
+  syncBlockFiltersCalled,
   invalidBlockHeader,
   noChainHead,
   newBlockHeader,
@@ -42,6 +58,43 @@ typedef PeerStatusEvent =
     });
 
 typedef PeerAddressesEvent = void Function(Peer peer, List<Address> addresses);
+
+typedef PeerBlockReceivedEvent = void Function(Peer peer, Block block);
+
+typedef PeerBlockFilterReceivedEvent =
+    void Function(Peer peer, Uint8List blockHash, BasicBlockFilter filter);
+
+class RequestedBlocks {
+  final Map<String, DateTime> requestedBlocks = {};
+
+  void _expireOldRequests() {
+    final now = DateTime.now();
+    requestedBlocks.removeWhere(
+      (blockHash, requestTime) =>
+          now.difference(requestTime) > const Duration(minutes: 10),
+    );
+  }
+
+  void addRequestedBlock(Uint8List blockHash) {
+    _expireOldRequests();
+    requestedBlocks[blockHash.toHex()] = DateTime.now();
+  }
+
+  void addRequestedBlocks(List<Uint8List> blockHashes) {
+    _expireOldRequests();
+    final now = DateTime.now();
+    for (final blockHash in blockHashes) {
+      requestedBlocks[blockHash.toHex()] = now;
+    }
+  }
+
+  bool isBlockRequested(Uint8List blockHash) {
+    _expireOldRequests();
+    final result = requestedBlocks.containsKey(blockHash.toHex());
+    if (result) requestedBlocks.remove(blockHash.toHex());
+    return result;
+  }
+}
 
 Uint8List _ipv4ToIpv6(String ipv4) {
   final parts = ipv4.split('.');
@@ -116,12 +169,15 @@ class Peer {
 
   PeerStatusEvent _onStatusChange;
   PeerAddressesEvent? _onAddresses;
+  PeerBlockReceivedEvent? _onBlockReceived;
+  PeerBlockFilterReceivedEvent? _onBlockFilterReceived;
   Socket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
   Timer? _bfHeadersTimer;
   int _bfHeadersTimeoutCount = 0;
   int? _serviceFlags;
+  final _requestedBlocks = RequestedBlocks();
 
   PeerStatus get status => _status;
   int? get serviceFlags => _serviceFlags;
@@ -135,9 +191,13 @@ class Peer {
     required this.network,
     required PeerStatusEvent onStatusChange,
     required PeerAddressesEvent? onAddresses,
+    required PeerBlockReceivedEvent? onBlockReceived,
+    required PeerBlockFilterReceivedEvent? onBlockFilterReceived,
     required this.verbose,
   }) : _onStatusChange = onStatusChange,
-       _onAddresses = onAddresses;
+       _onAddresses = onAddresses,
+       _onBlockReceived = onBlockReceived,
+       _onBlockFilterReceived = onBlockFilterReceived;
 
   void setPeerStatusChangeCallback(PeerStatusEvent callback) {
     // set the callback for status changes
@@ -147,6 +207,16 @@ class Peer {
   void setAddressesCallback(PeerAddressesEvent? callback) {
     // set the callback for receiving addresses
     _onAddresses = callback;
+  }
+
+  void setBlockReceivedCallback(PeerBlockReceivedEvent? callback) {
+    // set the callback for receiving blocks
+    _onBlockReceived = callback;
+  }
+
+  void setBlockFilterReceivedCallback(PeerBlockFilterReceivedEvent? callback) {
+    // set the callback for receiving block filters
+    _onBlockFilterReceived = callback;
   }
 
   static int defaultPort(Network network) {
@@ -212,7 +282,14 @@ class Peer {
     throw Exception('No valid IP address found for DNS seed: $randomSeed');
   }
 
-  void _doStatusChange(PeerStatus newStatus, {PeerStatusChangeReason? reason}) {
+  void _doStatusChange(PeerStatus newStatus, PeerStatusChangeReason reason) {
+    // TEMP:TODO: log status change/reason
+    _log.info(
+      '\x1B[32mPeer status changed: $newStatus, Reason: $reason\x1B[0m',
+    );
+    // sleep 1s
+    sleep(Duration(seconds: 1));
+
     // reset any timers
     _clearBfHeadersTimer();
     // check if the status is already the same
@@ -242,7 +319,10 @@ class Peer {
         timeout: const Duration(seconds: 5),
       );
       final socket = _socket!;
-      _doStatusChange(PeerStatus.connected);
+      _doStatusChange(
+        PeerStatus.connected,
+        PeerStatusChangeReason.socketConnectSuccess,
+      );
       if (verbose) {
         _log.info('Connected to peer: $ip:$port');
       }
@@ -312,7 +392,7 @@ class Peer {
           _socket = null;
           _doStatusChange(
             PeerStatus.disconnected,
-            reason: PeerStatusChangeReason.socketClosed,
+            PeerStatusChangeReason.socketClosed,
           );
         },
         onError: (Object error) {
@@ -323,7 +403,10 @@ class Peer {
       );
     } catch (error) {
       _log.severe('Failed to connect to peer: $ip:$port, Error: $error');
-      _doStatusChange(PeerStatus.disconnected);
+      _doStatusChange(
+        PeerStatus.disconnected,
+        PeerStatusChangeReason.socketConnectFailed,
+      );
     }
   }
 
@@ -354,9 +437,7 @@ class Peer {
         );
       }
     } else if (message is MessageBlock) {
-      _log.info(
-        '<<<<<: $ip:$port, Block: ${message.block.header.previousBlockHeaderHash.toHex()}',
-      );
+      _log.info('<<<<<: $ip:$port, Block: ${message.block.header.hashNice()}');
       _log.info('       Transactions: ${message.block.transactions.length}');
       //for (final tx in message.block.transactions) {
       //  _log.info('       Transaction: ${tx.txid()}');
@@ -403,6 +484,20 @@ class Peer {
       _log.info(
         '<<<<<: $ip:$port, CfHeaders: ${message.filterType} type, ${message.stopHash.toHex()} stop hash, ${message.previousFilterHeader.toHex()} previous filter hash, ${message.filterHashes.length} hashes',
       );
+    } else if (message is MessageCFilter) {
+      if (_chainManager == null) {
+        _log.warning(
+          'ChainManager is not initialized, cannot log block filter message',
+        );
+        return;
+      }
+      final chainManager = _chainManager!;
+      final height = chainManager.bestChainHead
+          .getAtHash(message.blockHash)
+          .height;
+      _log.info(
+        '<<<<<: $ip:$port, CFilter: ${message.filterType} type, ${message.blockHash.reverse().toHex()} block hash ($height), ${message.filterBytes.length} bytes',
+      );
     } else if (message is MessageUnknown) {
       _log.info('<<<<<: $ip:$port, Unknown: ${message.command}');
     }
@@ -430,7 +525,10 @@ class Peer {
       }
       socket.add(MessageVerack().toBytes(network));
       // set status to handshake complete
-      _doStatusChange(PeerStatus.handshakeComplete);
+      _doStatusChange(
+        PeerStatus.handshakeComplete,
+        PeerStatusChangeReason.verackMessageReceived,
+      );
     } else if (message is MessagePing) {
       if (verbose) {
         _log.info('>>>>>: $ip:$port, Pong');
@@ -448,7 +546,20 @@ class Peer {
     } else if (message is MessageGetData) {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
+      if (_onBlockReceived != null) {
+        _onBlockReceived!(this, message.block);
+      }
       //print('##Received block from peer: $ip:$port (${message.block.header.hashNice()})');
+      if (_status == PeerStatus.blockFilterGetLatestBlock) {
+        ///return;
+      }
+      if (_requestedBlocks.isBlockRequested(message.block.header.hash())) {
+        _log.info(
+          'Received requested block: ${message.block.header.hashNice()}',
+        );
+        // we should already have the header for this block if we requested if
+        return;
+      }
       // add the block to the block headers
       if (_statusAtLeast(PeerStatus.blockHeadersSynced)) {
         if (_chainManager == null) {
@@ -461,7 +572,7 @@ class Peer {
               // we now need to resync to get the new block filter headers
               _doStatusChange(
                 PeerStatus.blockHeadersSynced,
-                reason: PeerStatusChangeReason.newBlockHeader,
+                PeerStatusChangeReason.newBlockHeader,
               );
             }
             break; // block added successfully
@@ -472,7 +583,7 @@ class Peer {
             // if the block is not part of any of our known chains, we need to request more headers
             _doStatusChange(
               PeerStatus.handshakeComplete,
-              reason: PeerStatusChangeReason.noChainHead,
+              PeerStatusChangeReason.noChainHead,
             );
             break;
         }
@@ -511,19 +622,22 @@ class Peer {
           );
           _doStatusChange(
             PeerStatus.handshakeComplete,
-            reason: PeerStatusChangeReason.invalidBlockHeader,
+            PeerStatusChangeReason.invalidBlockHeader,
           );
           return;
         case AddBlockHeadersResult.noChainHead:
           _log.warning('Failed to add headers, no chain head found');
           _doStatusChange(
             PeerStatus.handshakeComplete,
-            reason: PeerStatusChangeReason.noChainHead,
+            PeerStatusChangeReason.noChainHead,
           );
           return;
       }
       if (message.headers.length < maxBlockHeaders) {
-        _doStatusChange(PeerStatus.blockHeadersSynced);
+        _doStatusChange(
+          PeerStatus.blockHeadersSynced,
+          PeerStatusChangeReason.headersMessageLessThanMax,
+        );
       } else {
         // request next batch of block headers
         if (verbose) {
@@ -574,10 +688,47 @@ class Peer {
         message.stopHash,
         chainManager.bestChainHead.header.hash(),
       )) {
-        _doStatusChange(PeerStatus.blockFilterHeaderSynced);
+        _doStatusChange(
+          PeerStatus.blockFilterHeaderSynced,
+          PeerStatusChangeReason.cfHeadersMessageStopHashReachedBestChainHead,
+        );
       } else {
         // request next batch of block filter headers
         _sendGetCfHeaders(socket, chainManager);
+      }
+    } else if (message is MessageCFilter) {
+      if (status != PeerStatus.blockFilterSyncing) {
+        _log.warning('Received block filter when not syncing');
+        return;
+      }
+      if (_chainManager == null) {
+        _log.warning(
+          'ChainManager is not initialized, cannot process block filters',
+        );
+        return;
+      }
+      final chainManager = _chainManager!;
+      // add the headers to the block filter list
+      if (message.filterType != BasicBlockFilter.filterType) {
+        _log.warning(
+          'Unsupported block filter type: ${message.filterType}, expected 0',
+        );
+        return;
+      }
+      // TODO: add the block filter to the chain manager
+      /*
+      chainManager.addBlockFilter(
+        message.blockHash,
+        BasicBlockFilter.fromBytes(message.filterBytes),
+      );
+      */
+
+      if (_onBlockFilterReceived != null) {
+        _onBlockFilterReceived!(
+          this,
+          message.blockHash,
+          BasicBlockFilter.fromBytes(filterBytes: message.filterBytes),
+        );
       }
     }
   }
@@ -619,7 +770,10 @@ class Peer {
     }
     _socket?.destroy();
     _socket = null;
-    _doStatusChange(PeerStatus.disconnected);
+    _doStatusChange(
+      PeerStatus.disconnected,
+      PeerStatusChangeReason.disconnectCalled,
+    );
   }
 
   void syncBlockHeaders(ChainManager chainManager) {
@@ -636,7 +790,10 @@ class Peer {
     final socket = _socket!;
     _chainManager = chainManager;
     //  start requesting block headers
-    _doStatusChange(PeerStatus.blockHeadersSyncing);
+    _doStatusChange(
+      PeerStatus.blockHeadersSyncing,
+      PeerStatusChangeReason.syncBlockHeadersCalled,
+    );
     if (verbose) {
       _log.info(
         '>>>>>: $ip:$port, GetHeaders: ${headerHashNice(chainManager.bestChainHead.header.hash())}',
@@ -717,7 +874,10 @@ class Peer {
     if (chainManager.bestBlockFilterHead.height <
         chainManager.bestChainHead.height) {
       //  start requesting block filter headers
-      _doStatusChange(PeerStatus.blockFilterHeaderSyncing);
+      _doStatusChange(
+        PeerStatus.blockFilterHeaderSyncing,
+        PeerStatusChangeReason.syncBlockFilterHeadersCalled,
+      );
       _startOrResetCfHeadersTimer();
     } else {
       if (verbose) {
@@ -725,7 +885,10 @@ class Peer {
           'block filter headers are already synced for peer: $ip:$port',
         );
       }
-      _doStatusChange(PeerStatus.blockFilterHeaderSynced);
+      _doStatusChange(
+        PeerStatus.blockFilterHeaderSynced,
+        PeerStatusChangeReason.syncBlockFilterHeadersCalledButAlreadySynced,
+      );
     }
   }
 
@@ -736,11 +899,72 @@ class Peer {
       );
       return;
     }
-    _doStatusChange(PeerStatus.requestAddrs);
+    _doStatusChange(
+      PeerStatus.requestAddrs,
+      PeerStatusChangeReason.requestAddrsCalled,
+    );
     final socket = _socket!;
     if (verbose) {
       _log.info('>>>>>: $ip:$port, GetAddr');
     }
     socket.add(MessageGetAddr().toBytes(network));
+  }
+
+  void requestBlocks(List<Uint8List> blockHashes, PeerStatus targetStatus) {
+    assert(
+      targetStatus == PeerStatus.blockFilterGetLatestBlock ||
+          targetStatus == PeerStatus.getInterestingBlocks,
+    );
+    if (_socket == null) {
+      _log.warning(
+        'No active socket connection to request block from: $ip:$port',
+      );
+      return;
+    }
+    _requestedBlocks.addRequestedBlocks(blockHashes);
+    _doStatusChange(targetStatus, PeerStatusChangeReason.requestBlocksCalled);
+    final socket = _socket!;
+    if (verbose) {
+      _log.info(
+        '>>>>>: $ip:$port, GetData - Blocks: ${blockHashes.map((hash) => hash.reverse().toHex()).join(', ')}',
+      );
+    }
+    socket.add(
+      MessageGetData(
+        inventory: blockHashes
+            .map(
+              (hash) => InventoryItem(type: InventoryType.msgBlock, hash: hash),
+            )
+            .toList(),
+      ).toBytes(network),
+    );
+  }
+
+  void syncBlockFilters(int startHeight, Uint8List stopHash) {
+    if (!_statusAtLeast(PeerStatus.blockFilterHeaderSynced)) {
+      _log.warning(
+        'Cannot start syncing, peer is not in block filter header synced state: $ip:$port',
+      );
+      return;
+    }
+    if (status != PeerStatus.blockFilterSyncing) {
+      _doStatusChange(
+        PeerStatus.blockFilterSyncing,
+        PeerStatusChangeReason.syncBlockFiltersCalled,
+      );
+    }
+    final socket = _socket!;
+    if (verbose) {
+      _log.info(
+        '>>>>>: $ip:$port, GetCFilters - Start Height: $startHeight, Stop Hash: ${stopHash.reverse().toHex()}',
+      );
+    }
+    socket.add(
+      MessageGetCFilters(
+        filterType: BasicBlockFilter.filterType,
+        startHeight: startHeight,
+        stopHash: stopHash,
+      ).toBytes(network),
+    );
   }
 }

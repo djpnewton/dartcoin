@@ -46,6 +46,8 @@ class PeerManager {
       network: network,
       onStatusChange: _peerStatusChange,
       onAddresses: _peerAddressesReceived,
+      onBlockReceived: null,
+      onBlockFilterReceived: null,
       verbose: verbose,
     );
     peer.connect();

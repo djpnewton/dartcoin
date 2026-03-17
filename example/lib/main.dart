@@ -540,8 +540,8 @@ class TestP2pCommand extends Command<void> {
       verbose: true,
       syncBlockFilterHeaders: syncBlockFilterHeaders,
       syncBlockHeaders: syncBlockHeaders,
-      //scanAddresses: scanAddresses,
-      //startBlock: startBlock,
+      scanAddresses: scanAddresses,
+      startBlock: startBlock,
     );
     node.add(peer: peer);
   }

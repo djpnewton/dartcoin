@@ -656,6 +656,23 @@ class ChainManager {
     final initialBest = _bestChainHead;
     var headersAdded = 0;
     for (final header in headers) {
+      // check if header is already is a head
+      bool isAHead = false;
+      for (final chainHead in _chainHeads) {
+        if (compareHashes(chainHead.header.hash(), header.hash())) {
+          isAHead = true;
+          headersAdded++;
+          break;
+        }
+      }
+      if (isAHead) {
+        if (verbose) {
+          _log.info(
+            'Received header (${headerHashNice(header.hash())}) is already a chainhead, skipping',
+          );
+        }
+        continue; // skip this header
+      }
       // create new chainhead from block header
       final newChainHead = _findNewChainHead(
         header,
@@ -833,8 +850,56 @@ class ChainManager {
     _activeChain = false;
   }
 
-  bool hasValidFilterChain() {
-    //TODO: recreate filter and check if it agrees with the peer
+  Future<bool> hasValidFilterChain(Block block, int blockHeight) async {
+    // get the  current and previous filter header
+    if (bestBlockFilterHead.height < blockHeight) {
+      _log.warning(
+        '_chainManager bestBlockFilterHead height is less than requested block number',
+      );
+      return false;
+    }
+    var bfhNode = bestBlockFilterHead;
+    while (bfhNode.height > blockHeight) {
+      if (bfhNode.previous == null) {
+        _log.warning(
+          '_chainManager bestBlockFilterHead previous is null while traversing to requested block number',
+        );
+        return false;
+      }
+      bfhNode = bfhNode.previous!;
+    }
+    final currentFilterHeader = bfhNode.header;
+    if (bfhNode.previous == null) {
+      _log.warning(
+        '_chainManager bestBlockFilterHead previous is null for requested block number',
+      );
+      return false;
+    }
+    final previousFilterHeader = bfhNode.previous!.header;
+    // get the block inputs to create the filter
+    final prevOutputScripts = await BasicBlockFilter.prevOutputScripts(
+      block,
+      BlockDnTxProvider(network),
+    );
+    // create the block filter
+    final blockFilter = BasicBlockFilter(
+      block: block,
+      prevOutputScripts: prevOutputScripts,
+    );
+    // verify the filter header
+    final expectedFilterHeader = BasicBlockFilter.filterHeader(
+      blockFilter.filterHash,
+      previousFilterHeader,
+    );
+    if (!listEquals(expectedFilterHeader, currentFilterHeader)) {
+      _log.warning(
+        'Block filter header mismatch for block at height $blockHeight: expected ${currentFilterHeader.toHex()}, got ${expectedFilterHeader.toHex()}',
+      );
+      return false;
+    }
+    if (verbose) {
+      _log.info('Block filter verified for block at height $blockHeight');
+    }
     return true;
   }
 }
