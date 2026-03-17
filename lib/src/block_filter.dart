@@ -221,7 +221,7 @@ class BasicBlockFilter {
       if (i == 0) continue; // skip coinbase
       final tx = block.transactions[i];
       for (final input in tx.inputs) {
-        final prevTxid = input.txid.reversed.toList().toHex();
+        final prevTxid = input.txid;
         final spentTx =
             txCache[prevTxid] ?? await txProvider.fromTxid(prevTxid);
         txCache[prevTxid] = spentTx;

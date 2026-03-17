@@ -706,12 +706,12 @@ class CreateTxCommand extends Command<void> {
       if (vout == null || vout < 0) {
         throw ArgumentError('Invalid vout number: ${parts[1]} in coin: $coin');
       }
-      return TxIn(txid: txid.toBytes().reverse(), vout: vout, scriptSig: Uint8List(0), sequence: 0xFFFFFFFF);
+      return TxIn(txid: txid, vout: vout, scriptSig: Uint8List(0), sequence: 0xFFFFFFFF);
     }).toList();
     // sum input amounts
     var totalInputAmount = 0;
     for (var input in inputs) {
-      final inputTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final inputTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       final inputAmount = inputTx.outputs[input.vout].value;
       totalInputAmount += inputAmount;
     }
@@ -838,7 +838,7 @@ class SignTxCommand extends Command<void> {
     List<TxOut> previousOutputs = [];
     List<PrivateKey> privKeys = [];
     for (var input in tx.inputs) {
-      final prevTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final prevTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       prevTxs.add(prevTx);
       final prevOutput = prevTx.outputs[input.vout];
       previousOutputs.add(prevOutput);
@@ -861,12 +861,12 @@ class SignTxCommand extends Command<void> {
         final childPubKeyHash = hash160(childPubKey);
         if (listEquals(childPubKeyHash, pubkeyHash)) {
           foundKey = childKey;
-          _log.info('Found matching private key for input ${bytesToHex(input.txid.reverse())}:${input.vout} at index $i');
+          _log.info('Found matching private key for input ${input.txid}:${input.vout} at index $i');
           break;
         }
       }
       if (foundKey == null) {
-        _log.info('No matching private key found for input ${bytesToHex(input.txid.reverse())}:${input.vout} in the first 100 child keys. Cannot sign this transaction.');
+        _log.info('No matching private key found for input ${input.txid}:${input.vout} in the first 100 child keys. Cannot sign this transaction.');
         return;
       }
       privKeys.add(foundKey);
@@ -932,7 +932,7 @@ class VerifyTxCommand extends Command<void> {
     // get the prev outputs for the inputs
     List<TxOut> previousOutputs = [];
     for (var input in tx.inputs) {
-      final prevTx = await BlockDnTxProvider(network).fromTxid(bytesToHex(input.txid.reverse()));
+      final prevTx = await BlockDnTxProvider(network).fromTxid(input.txid);
       final prevOutput = prevTx.outputs[input.vout];
       previousOutputs.add(prevOutput);
     }

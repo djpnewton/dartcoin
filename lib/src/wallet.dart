@@ -2,8 +2,6 @@ import 'dart:typed_data';
 
 import 'utils.dart';
 
-// TODO: find all uint8list txid fields in the codebase and rename them to txidRaw and add a txid() function that returns the reversed hex string for easier debugging and readability. This includes the txid field in the Coin class, and any txid fields in the transaction.dart file.
-
 // TODO: move the logic around scanaddresses and startblock from node to wallet
 // this means that the wallet will get block filter and block notifications
 

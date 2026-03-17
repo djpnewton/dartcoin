@@ -21,7 +21,7 @@ Future<List<TxOut>> _prevOutputs(
 ) async {
   return await Future.wait(
     inputs.map((input) async {
-      var prevTx = await txProvider.fromTxid(input.txid.reverse().toHex());
+      var prevTx = await txProvider.fromTxid(input.txid);
       return prevTx.outputs[input.vout];
     }),
   );
@@ -74,7 +74,7 @@ void main() {
       version: 1,
       inputs: [
         TxIn(
-          txid: coinbaseTx.txid().toBytes().reverse(),
+          txid: coinbaseTx.txid(),
           vout: 0,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,
@@ -124,14 +124,14 @@ void main() {
       version: 1,
       inputs: [
         TxIn(
-          txid: signedTx.txid().toBytes().reverse(),
+          txid: signedTx.txid(),
           vout: 0,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,
           witness: TxWitness(stackItems: []),
         ),
         TxIn(
-          txid: coinbaseTx.txid().toBytes().reverse(),
+          txid: coinbaseTx.txid(),
           vout: 0,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,
@@ -185,13 +185,13 @@ void main() {
       version: 1,
       inputs: [
         TxIn(
-          txid: signedTx2.txid().toBytes().reverse(),
+          txid: signedTx2.txid(),
           vout: 0,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,
         ),
         TxIn(
-          txid: coinbaseTx.txid().toBytes().reverse(),
+          txid: coinbaseTx.txid(),
           vout: 0,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,

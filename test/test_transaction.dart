@@ -20,7 +20,7 @@ void main() {
     expect(tx.flag, equals(1));
     expect(tx.locktime, equals(0));
     expect(tx.inputs.length, equals(1));
-    expect(tx.inputs[0].txid, equals(Uint8List(32)));
+    expect(tx.inputs[0].txidRaw, equals(Uint8List(32)));
     expect(tx.inputs[0].vout, equals(0xffffffff));
     expect(tx.inputs[0].scriptSig, equals(hexToBytes('5100062f4077697a2f')));
     expect(tx.inputs[0].sequence, equals(0xffffffff));
@@ -54,7 +54,7 @@ void main() {
     expect(tx.flag, equals(1));
     expect(tx.locktime, equals(2065));
     expect(tx.inputs.length, equals(1));
-    expect(tx.inputs[0].txid, equals(hexToBytes('81f980c7703039a91a9a7c5365f9902975e2944209629fa58fc36dd1a25e1831')));
+    expect(tx.inputs[0].txidRaw, equals(hexToBytes('81f980c7703039a91a9a7c5365f9902975e2944209629fa58fc36dd1a25e1831')));
     expect(tx.inputs[0].vout, equals(0));
     expect(tx.inputs[0].scriptSig, equals(Uint8List(0)));
     expect(tx.inputs[0].sequence, equals(4294967293));
@@ -87,7 +87,7 @@ void main() {
     expect(tx.version, equals(1));
     expect(tx.locktime, equals(0));
     expect(tx.inputs.length, equals(1));
-    expect(tx.inputs[0].txid, equals(Uint8List(32)));
+    expect(tx.inputs[0].txidRaw, equals(Uint8List(32)));
     expect(tx.inputs[0].vout, equals(0xffffffff));
     expect(tx.inputs[0].scriptSig, equals(hexToBytes('0420e7494d017f062f503253482f')));
     expect(tx.inputs[0].sequence, equals(0xffffffff));
@@ -113,7 +113,7 @@ void main() {
     expect(tx.version, equals(1));
     expect(tx.locktime, equals(0));
     expect(tx.inputs.length, equals(1));
-    expect(tx.inputs[0].txid, equals(hexToBytes('c181fef965f3baff3371623f1813682d7e367fd46fb0d68da459dfe861679946')));
+    expect(tx.inputs[0].txidRaw, equals(hexToBytes('c181fef965f3baff3371623f1813682d7e367fd46fb0d68da459dfe861679946')));
     expect(tx.inputs[0].vout, equals(0));
     expect(tx.inputs[0].scriptSig, equals(hexToBytes('4730440220728a9e02be7b0c2e148aad0b0866308313a58e899c9a811d33b247cdc3de5dd102200f225869167c7fde498dfa5731dde5e0d37da71fd992a6ee752bfe6c7d1747e2012103372ac4423314b0f492fd5870c477d9331f624c183f37160bdec3a6c0f60e49af')));
     expect(tx.inputs[0].sequence, equals(0xffffffff));
@@ -141,11 +141,11 @@ void main() {
     expect(tx.flag, equals(1));
     expect(tx.locktime, equals(0));
     expect(tx.inputs.length, equals(2));
-    expect(tx.inputs[0].txid, equals(hexToBytes('0f417ec590690334faa2221f9fc5fb1094385dcc2df31169ded58f10c713bd6a').reversed.toList()));
+    expect(tx.inputs[0].txidRaw, equals(hexToBytes('0f417ec590690334faa2221f9fc5fb1094385dcc2df31169ded58f10c713bd6a').reversed.toList()));
     expect(tx.inputs[0].vout, equals(1));
     expect(tx.inputs[0].scriptSig, equals(Uint8List(0)));
     expect(tx.inputs[0].sequence, equals(0xffffffff));
-    expect(tx.inputs[1].txid, equals(hexToBytes('41bc0b25b06a57a46753c33e651820c491eabaed783bfb6bdc78faa7fabb7820').reversed.toList()));
+    expect(tx.inputs[1].txidRaw, equals(hexToBytes('41bc0b25b06a57a46753c33e651820c491eabaed783bfb6bdc78faa7fabb7820').reversed.toList()));
     expect(tx.inputs[1].vout, equals(1));
     expect(tx.inputs[1].scriptSig, equals(Uint8List(0)));
     expect(tx.inputs[1].sequence, equals(0xffffffff));
@@ -175,7 +175,7 @@ void main() {
 
   test('create/serialize/parse TxIn', () {
     var txIn = TxIn(
-      txid: hexToBytes('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+      txid: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
       vout: 1,
       scriptSig: hexToBytes('483045022100f3b1e5c8a2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef01202206d7dbb42dcc78ba1661bb3106bb8ae1b424036592c0a16c9b51adcad46731eba01'),
       sequence: 0xffffffff,
@@ -235,7 +235,7 @@ void main() {
       flag: 1,
       inputs: [
         TxIn(
-          txid: hexToBytes('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+          txid: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           vout: 1,
           scriptSig: Uint8List(0),
           sequence: 0xffffffff,
@@ -310,7 +310,7 @@ void main() {
       version: 1,
       inputs: [
         TxIn(
-          txid: hexToBytes('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),
+          txid: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           vout: 1,
           scriptSig: hexToBytes('483045022100f3b1e5c8a2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f901234567890abcdef01202206d7dbb42dcc78ba1661bb3106bb8ae1b424036592c0a16c9b51adcad46731eba01'),
           sequence: 0xffffffff,

@@ -303,7 +303,7 @@ class Node {
           final txProvider = BlockDnTxProvider(network);
           for (final input in tx.inputs) {
             final prevTx = await txProvider.fromTxid(
-              input.txid.reversed.toList().toHex(),
+              input.txid,
             );
             if (scripts.any(
               (script) =>

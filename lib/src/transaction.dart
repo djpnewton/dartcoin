@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'utils.dart';
 
 class TxIn {
-  final Uint8List txid;
+  final String txid;
   final int vout;
   final Uint8List scriptSig;
   final int sequence;
@@ -18,13 +18,15 @@ class TxIn {
     this.witness,
   });
 
+  Uint8List get txidRaw => Uint8List.fromList(txid.toBytes().reverse());
+
   bool isSegwit() {
     return witness != null;
   }
 
   Uint8List toBytes() {
     final buffer = BytesBuilder();
-    buffer.add(txid);
+    buffer.add(txidRaw);
     buffer.add(
       Uint8List(4)..buffer.asByteData().setUint32(0, vout, Endian.little),
     );
@@ -43,7 +45,8 @@ class TxIn {
     }
     var i = 0;
     final buffer = ByteData.sublistView(bytes);
-    final txid = bytes.sublist(i, 32);
+    final txidRaw = bytes.sublist(i, 32);
+    final txid = txidRaw.reverse().toHex();
     i += 32;
     final vout = buffer.getUint32(i, Endian.little);
     i += 4;
@@ -69,7 +72,7 @@ class TxIn {
 
   String toJson() {
     return '''{
-      "txid": "${txid.toHex()}",
+      "txid": "$txid",
       "vout": $vout,
       "scriptSig": "${scriptSig.toHex()}",
       "sequence": $sequence,
@@ -80,7 +83,7 @@ class TxIn {
   factory TxIn.fromJson(String json) {
     final data = jsonDecode(json);
     return TxIn(
-      txid: hexToBytes(data['txid'] as String),
+      txid: data['txid'] as String,
       vout: data['vout'] as int,
       scriptSig: hexToBytes(data['scriptSig'] as String),
       sequence: data['sequence'] as int,
