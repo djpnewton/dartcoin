@@ -430,14 +430,14 @@ class TestP2pCommand extends Command<void> {
       defaultsTo: true,
     );
     argParser.addMultiOption(
-      'scan-addresses',
+      'wallet-addresses',
       abbr: 'a',
-      help: 'Scan for addresses in block filters.',
+      help: 'Scan for wallet addresses in block filters.',
     );
     argParser.addOption(
-      'start-block',
+      'birthday-block',
       abbr: 's',
-      help: 'The starting block to use for scanning addresses.',
+      help: 'The starting block to use for scanning wallet addresses.',
     );
   }
 
@@ -470,22 +470,22 @@ class TestP2pCommand extends Command<void> {
     final syncBlockHeaders = argResults?.flag('sync-block-headers') ?? true;
     final syncBlockFilterHeaders =
         argResults?.flag('sync-block-filter-headers') ?? true;
-    final scanAddresses =
-        argResults?.multiOption('scan-addresses') ?? <String>[];
-    final startBlockRaw = argResults?.option('start-block');
-    int? startBlock = startBlockRaw != null
-        ? int.tryParse(startBlockRaw)
+    final walletAddresses =
+        argResults?.multiOption('wallet-addresses') ?? <String>[];
+    final birthdayBlockRaw = argResults?.option('birthday-block');
+    int? birthdayBlock = birthdayBlockRaw != null
+        ? int.tryParse(birthdayBlockRaw)
         : null;
 
     _log.info(
       'Preferential Peering: $preferentialPeering, ' 
       'Sync Block Headers: $syncBlockHeaders, '
       'Sync Block Filter Headers: $syncBlockFilterHeaders, '
-      'Scan Addresses: $scanAddresses'
-      'Start Block: $startBlock', color: LogColor.brightBlue
+      'Wallet Addresses: $walletAddresses'
+      'Birthday Block: $birthdayBlock', color: LogColor.brightBlue
     );
 
-    if (scanAddresses.isNotEmpty) {
+    if (walletAddresses.isNotEmpty) {
       if (!syncBlockHeaders) {
         _log.severe(
           'Block headers must be synced (--sync-block-headers) when scanning addresses.',
@@ -498,9 +498,9 @@ class TestP2pCommand extends Command<void> {
         );
         return;
       }
-      if (startBlock == null) {
+      if (birthdayBlock == null) {
         _log.severe(
-          'Starting block must be provided (--start-block) when scanning addresses.',
+          'Birthday block must be provided (--birthday-block) when scanning addresses.',
         );
         return;
       }
@@ -531,8 +531,9 @@ class TestP2pCommand extends Command<void> {
       verbose: true,
       syncBlockFilterHeaders: syncBlockFilterHeaders,
       syncBlockHeaders: syncBlockHeaders,
-      scanAddresses: scanAddresses,
-      startBlock: startBlock,
+      wallet: walletAddresses.isNotEmpty
+          ? Wallet(addresses: walletAddresses, birthdayBlock: birthdayBlock)
+          : null,
     );
     node.add(peer: peer);
   }

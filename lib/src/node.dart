@@ -11,7 +11,6 @@ import 'chain_store.dart';
 import 'block.dart';
 import 'peer.dart';
 import 'block_filter.dart';
-import 'address.dart';
 import 'wallet.dart';
 
 final _log = ColorLogger('Node');
@@ -24,15 +23,13 @@ class Node {
   final bool verbose;
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
-  final List<String> scanAddresses;
-  final int? startBlock;
+  final Wallet? wallet;
+  late final int? _startBlock = wallet?.birthdayBlock;
 
   int _requestingBestBlockNumber = 0;
   Uint8List _requestingBestBlockHash = Uint8List(0);
   Uint8List _requestingBlockFiltersCurrentTargetHash = Uint8List(0);
   int _requestingBlockFiltersCurrentTargetHeight = 0;
-  List<Uint8List> interestingBlockHashes = [];
-  final Wallet wallet = Wallet();
 
   Node({
     required this.network,
@@ -40,20 +37,15 @@ class Node {
     this.verbose = false,
     this.syncBlockHeaders = true,
     this.syncBlockFilterHeaders = true,
-    this.scanAddresses = const [],
-    this.startBlock,
+    this.wallet,
   }) {
     assert(
       !(syncBlockFilterHeaders && !syncBlockHeaders),
       'Cannot sync block filter headers without syncing block headers',
     );
     assert(
-      !(scanAddresses.isNotEmpty && !syncBlockFilterHeaders),
+      !(wallet != null && wallet!.addresses.isNotEmpty && !syncBlockFilterHeaders),
       'Cannot scan addresses without syncing block filter headers',
-    );
-    assert(
-      !(scanAddresses.isNotEmpty && startBlock == null),
-      'startBlock must be provided when scanAddresses is not empty',
     );
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
@@ -232,101 +224,29 @@ class Node {
           block,
           _requestingBestBlockNumber,
         )) {
-          assert(startBlock != null);
-          // start syncing block filters from startBlock
+          final walletStartBlock = _startBlock;
+          if (walletStartBlock == null) return;
+          // start syncing block filters from wallet.startBlock
           final targetHeight =
-              _chainManager.bestChainHead.height < startBlock! + 500
+              _chainManager.bestChainHead.height < walletStartBlock + 500
               ? _chainManager.bestChainHead.height
-              : startBlock! + 500;
+              : walletStartBlock + 500;
           final targetHash = _chainManager.bestChainHead
               .getAt(targetHeight)
               .header
               .hash();
           _requestingBlockFiltersCurrentTargetHash = targetHash;
           _requestingBlockFiltersCurrentTargetHeight = targetHeight;
-          peer.syncBlockFilters(startBlock!, targetHash);
+          peer.syncBlockFilters(walletStartBlock, targetHash);
         }
       }
     } else if (peer.status == PeerStatus.getInterestingBlocks) {
-      // check if this block is in the requested interesting blocks
-      if (interestingBlockHashes.any(
-        (hash) => listEquals(hash, block.header.hash()),
-      )) {
-        if (verbose) {
-          _log.info(
-            'Received requested interesting block ${block.header.hashNice()} from peer ${peer.ip}:${peer.port}',
-          );
-        }
-        // list interesting transactions (ie. transactions that match our scan addresses)
-        // 1) convert scan addresses to scripts
-        final scripts = <Uint8List>[];
-        for (final address in scanAddresses) {
-          try {
-            final script = AddressData.parseAddress(address).script;
-            scripts.add(script);
-          } catch (e) {
-            _log.warning('Invalid address $address for network $network: $e');
-          }
-        }
-        // 2) check transactions for matching scripts
-        for (final tx in block.transactions) {
-          for (final output in tx.outputs) {
-            if (scripts.any(
-              (script) => listEquals(script, output.scriptPubKey),
-            )) {
-              final vout = tx.outputs.indexOf(output);
-              final coin = Coin(
-                txid: tx.txid(),
-                vout: vout,
-                amount: output.value,
-              );
-              if (!wallet.coins.any((c) => c.outpoint == coin.outpoint)) {
-                wallet.addCoin(coin);
-              }
-              if (verbose) {
-                _log.info(
-                  'Found interesting transaction ${tx.txid()} with matching output script. +${output.value} sats',
-                );
-                _log.info(
-                  'coin details [txid:vout:amount]: ${tx.txid()}:$vout:${output.value}',
-                  color: LogColor.brightGreen,
-                );
-                _log.info(
-                  'wallet: totalReceived=${wallet.totalReceived}sat, balance=${wallet.balance}sat',
-                  color: LogColor.brightBlue,
-                );
-              }
-            }
-          }
-        }
-        for (final tx in block.transactions.skip(1)) {
-          final txProvider = BlockDnTxProvider(network);
-          for (final input in tx.inputs) {
-            final prevTx = await txProvider.fromTxid(
-              input.txid,
-            );
-            if (scripts.any(
-              (script) =>
-                  listEquals(script, prevTx.outputs[input.vout].scriptPubKey),
-            )) {
-              wallet.spendCoin(prevTx.txid(), input.vout);
-              if (verbose) {
-                _log.info(
-                  'Found interesting transaction ${tx.txid()} with matching input script. -${prevTx.outputs[input.vout].value} sats',
-                );
-                _log.info(
-                  'coin details [txid:vout:amount]: ${prevTx.txid()}:${input.vout}:${prevTx.outputs[input.vout].value}',
-                  color: LogColor.brightRed,
-                );
-                _log.info(
-                  'wallet: totalReceived=${wallet.totalReceived}sat, balance=${wallet.balance}sat',
-                  color: LogColor.brightBlue,
-                );
-              }
-            }
-          }
-        }
+      if (verbose) {
+        _log.info(
+          'Received block ${block.header.hashNice()} from peer ${peer.ip}:${peer.port}, delegating to wallet',
+        );
       }
+      await wallet?.processBlock(block, network, verbose: verbose);
     }
   }
 
@@ -338,25 +258,7 @@ class Node {
     if (verbose) {
       _log.info('Block filter received from peer ${peer.ip}:${peer.port}');
     }
-    // convert scan addresses to scripts
-    final scripts = <Uint8List>[];
-    for (final address in scanAddresses) {
-      try {
-        final script = AddressData.parseAddress(address).script;
-        scripts.add(script);
-      } catch (e) {
-        _log.warning('Invalid address $address for network $network: $e');
-      }
-    }
-
-    if (filter.match(blockHash, scripts)) {
-      if (verbose) {
-        _log.info(
-          'Block filter matches monitored scripts for block hash: ${blockHash.reverse().toHex()}',
-        );
-        interestingBlockHashes.add(blockHash);
-      }
-    }
+    wallet?.processBlockFilter(blockHash, filter, network, verbose: verbose);
 
     if (peer.status == PeerStatus.blockFilterSyncing) {
       // check if we need to request more filters
@@ -381,7 +283,7 @@ class Node {
           if (verbose) {
             _log.info('Completed block filter sync at height $targetHeight');
           }
-          // show interesting block hashes
+          final interestingBlockHashes = wallet?.interestingBlockHashes ?? [];
           for (final hash in interestingBlockHashes) {
             _log.info(
               'Interesting block hash: ${hash.reverse().toHex()}',
