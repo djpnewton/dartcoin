@@ -8,7 +8,7 @@ import '../lib/src/bits.dart';
 void main() {
   test('BitsWriter', () {
     final writer = BitsWriter();
-    writer.writeBits(5, 3);
+    writer.writeBits(BigInt.from(5), 3);
     writer.writeBit(true);
     expect(writer.toString(), equals('1011'));
     expect(writer.toBytes(), equals(Uint8List.fromList([176])));
@@ -23,13 +23,13 @@ void main() {
     expect(writer.toString(), equals('1'));
     expect(writer.toBytes(), equals(Uint8List.fromList([128])));
     writer.clear();
-    writer.writeBits(0, 5);
+    writer.writeBits(BigInt.zero, 5);
     expect(writer.toString(), equals('00000'));
     writer.clear();
-    writer.writeBits(0xff, 5);
+    writer.writeBits(BigInt.from(0xff), 5);
     expect(writer.toString(), equals('11111'));
     writer.clear();
-    writer.writeBits(0, 16);
+    writer.writeBits(BigInt.zero, 16);
     expect(writer.toString(), equals('0000000000000000'));
     expect(writer.toBytes(), equals(Uint8List.fromList([0, 0])));
     writer.writeBit(true);

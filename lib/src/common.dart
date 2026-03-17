@@ -9,9 +9,14 @@ enum Network {
 
 enum ScriptType {
   p2pkh, // 'Pay to Public Key Hash'
+  p2sh, // 'Pay to Script Hash'
   p2shP2wpkh, // 'Pay to Witness Public Key Hash' wrapped in 'Pay to Script Hash'
   p2wpkh, // 'Pay to Witness Public Key Hash'
+  p2wsh, // 'Pay to Witness Script Hash'
+  p2tr, // 'Pay to Taproot'
 }
+
+enum AddressEncoding { base58, bech32, bech32m }
 
 bool isValidCompressedPublicKey(Uint8List publicKey) {
   // Check if the public key is a valid compressed format

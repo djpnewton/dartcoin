@@ -30,11 +30,11 @@ class BitcoinSignedMessage {
   BitcoinSignedMessage(this.address, this.signature);
 }
 
-class DERSignedMessage {
+class DERSignature {
   final Uint8List publicKey;
   final Uint8List signature;
 
-  DERSignedMessage(this.publicKey, this.signature);
+  DERSignature(this.publicKey, this.signature);
 }
 
 Uint8List _formatDER(Signature sig) {
@@ -196,8 +196,17 @@ BitcoinSignedMessage bitcoinSignedMessageSign(
   }
   recId = switch (scriptType) {
     ScriptType.p2pkh => 31 + recId,
+    ScriptType.p2sh => throw UnimplementedError(
+      'Bitcoin signed message for P2SH is not implemented yet',
+    ),
     ScriptType.p2shP2wpkh => 35 + recId,
     ScriptType.p2wpkh => 39 + recId,
+    ScriptType.p2wsh => throw UnimplementedError(
+      'Bitcoin signed message for P2WSH is not implemented yet',
+    ),
+    ScriptType.p2tr => throw UnimplementedError(
+      'Bitcoin signed message for Taproot is not implemented yet',
+    ),
   };
   // encode the signature in base64
   // the signature is a concatenation of the recovery ID, r and s values
@@ -262,6 +271,9 @@ bool bitcoinSignedMessageVerify(
       p2pkhAddress(pk.publicKey, network: Network.mainnet),
       p2pkhAddress(pk.publicKey, network: Network.testnet),
     ),
+    ScriptType.p2sh => throw UnimplementedError(
+      'Bitcoin signed message for P2SH is not implemented yet',
+    ),
     ScriptType.p2shP2wpkh => (
       p2shP2wpkhAddress(pk.publicKey, network: Network.mainnet),
       p2shP2wpkhAddress(pk.publicKey, network: Network.testnet),
@@ -269,6 +281,12 @@ bool bitcoinSignedMessageVerify(
     ScriptType.p2wpkh => (
       p2wpkhAddress(pk.publicKey, network: Network.mainnet),
       p2wpkhAddress(pk.publicKey, network: Network.testnet),
+    ),
+    ScriptType.p2wsh => throw UnimplementedError(
+      'Bitcoin signed message for P2WSH is not implemented yet',
+    ),
+    ScriptType.p2tr => throw UnimplementedError(
+      'Bitcoin signed message for Taproot is not implemented yet',
     ),
   };
   // check if the address matches the provided address
@@ -278,18 +296,28 @@ bool bitcoinSignedMessageVerify(
   return false;
 }
 
-DERSignedMessage derSign(PrivateKey pk, Uint8List message) {
+DERSignature derSignMessage(PrivateKey pk, Uint8List message) {
   // hash the message using SHA-256
   final hash = sha256(message);
   // create signature
-  final sig = sign(pk, hash);
-  // convert the signature to DER format
-  return DERSignedMessage(pk.publicKey, _formatDER(sig));
+  return derSignHash(pk, hash);
 }
 
-bool derVerify(PublicKey pk, Uint8List message, Uint8List derSignature) {
+bool derVerifyMessage(PublicKey pk, Uint8List message, Uint8List derSignature) {
   // hash the message using SHA-256
   final hash = sha256(message);
+  // verify the signature
+  return derVerifyHash(pk, hash, derSignature);
+}
+
+DERSignature derSignHash(PrivateKey pk, Uint8List hash) {
+  // create signature
+  final sig = sign(pk, hash);
+  // convert the signature to DER format
+  return DERSignature(pk.publicKey, _formatDER(sig));
+}
+
+bool derVerifyHash(PublicKey pk, Uint8List hash, Uint8List derSignature) {
   // parse the DER signature
   final sig = _parseDER(derSignature);
   // verify the signature

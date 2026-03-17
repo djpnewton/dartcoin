@@ -7,6 +7,8 @@ export 'src/common.dart';
 export 'src/keys.dart';
 export 'src/mnemonic.dart';
 export 'src/secp256k1.dart';
+export 'src/script.dart';
+export 'src/sign_tx.dart';
 export 'src/sign_verify.dart';
 export 'src/utils.dart';
 export 'src/wif.dart';
@@ -21,6 +23,7 @@ export 'src/sha512.dart';
 export 'src/siphash.dart';
 
 // p2p
+export 'src/block_filter.dart';
 export 'src/node.dart';
 export 'src/p2p_messages.dart';
 export 'src/peer.dart';

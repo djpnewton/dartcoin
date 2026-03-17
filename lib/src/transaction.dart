@@ -8,13 +8,19 @@ class TxIn {
   final int vout;
   final Uint8List scriptSig;
   final int sequence;
+  final TxWitness? witness;
 
   TxIn({
     required this.txid,
     required this.vout,
     required this.scriptSig,
     required this.sequence,
+    this.witness,
   });
+
+  bool isSegwit() {
+    return witness != null;
+  }
 
   Uint8List toBytes() {
     final buffer = BytesBuilder();
@@ -66,7 +72,8 @@ class TxIn {
       "txid": "${txid.toHex()}",
       "vout": $vout,
       "scriptSig": "${scriptSig.toHex()}",
-      "sequence": $sequence
+      "sequence": $sequence,
+      "witness": ${witness != null ? witness!.toJson() : 'null'}
     }''';
   }
 
@@ -77,6 +84,9 @@ class TxIn {
       vout: data['vout'] as int,
       scriptSig: hexToBytes(data['scriptSig'] as String),
       sequence: data['sequence'] as int,
+      witness: data['witness'] != null
+          ? TxWitness.fromJson(data['witness'] as String)
+          : null,
     );
   }
 }
@@ -206,16 +216,19 @@ class TxWitness {
   }
 }
 
+enum TxType { legacy, segwit }
+
 class Transaction {
   int version;
   int? marker;
   int? flag;
   List<TxIn> inputs;
   List<TxOut> outputs;
-  TxWitness? witness;
+  List<TxWitness>? witness;
   int locktime;
 
   Transaction({
+    TxType? type,
     required this.version,
     this.marker,
     this.flag,
@@ -223,14 +236,36 @@ class Transaction {
     required this.outputs,
     this.witness,
     required this.locktime,
-  });
+  }) {
+    if (type == TxType.legacy) {
+      if (marker != null) {
+        throw ArgumentError('Legacy transactions must not have a marker');
+      }
+      if (flag != null) {
+        throw ArgumentError('Legacy transactions must not have a flag');
+      }
+      if (witness != null) {
+        throw ArgumentError('Legacy transactions must not have witness data');
+      }
+    }
+    if (type == TxType.segwit) {
+      if (marker != null && marker != 0x00) {
+        throw ArgumentError('Segwit transactions must have marker 0x00');
+      }
+      if (flag != null && flag != 0x01) {
+        throw ArgumentError('Segwit transactions must have flag 0x01');
+      }
+      marker = 0x00;
+      flag = 0x01;
+    }
+  }
 
   String wtxid() {
     return hash256(toBytes()).reversed.toList().toHex();
   }
 
   String txid() {
-    if (witness == null) {
+    if (type() == TxType.legacy) {
       return wtxid();
     }
     // txid excludes the marker/flag and witness data
@@ -254,6 +289,18 @@ class Transaction {
     return hash256(buffer.toBytes()).reversed.toList().toHex();
   }
 
+  TxType type() {
+    final t = (marker == 0x00 && flag == 0x01) ? TxType.segwit : TxType.legacy;
+    if (t == TxType.legacy) {
+      for (final input in inputs) {
+        if (input.isSegwit()) {
+          throw FormatException('Legacy transaction cannot have segwit inputs');
+        }
+      }
+    }
+    return t;
+  }
+
   Uint8List toBytes() {
     final buffer = BytesBuilder();
     buffer.add(
@@ -273,7 +320,14 @@ class Transaction {
       buffer.add(output.toBytes());
     }
     if (witness != null) {
-      buffer.add(witness!.toBytes());
+      for (final w in witness!) {
+        buffer.add(w.toBytes());
+      }
+    } else if (type() == TxType.segwit) {
+      // if segwit, we need to add an empty witness for each input
+      for (var i = 0; i < inputs.length; i++) {
+        buffer.add(TxWitness(stackItems: []).toBytes());
+      }
     }
     buffer.add(
       Uint8List(4)..buffer.asByteData().setUint32(0, locktime, Endian.little),
@@ -316,14 +370,27 @@ class Transaction {
       i += output.toBytes().length;
     }
     // read witness if present
-    TxWitness? witness;
+    List<TxWitness>? witness;
     if (marker != null && flag != null) {
-      witness = TxWitness.fromBytes(bytes.sublist(i));
-      i += witness.toBytes().length;
+      witness = [];
+      for (var j = 0; j < inputs.length; j++) {
+        final witnessField = TxWitness.fromBytes(bytes.sublist(i));
+        i += witnessField.toBytes().length;
+        witness.add(witnessField);
+        inputs[j] = TxIn(
+          txid: inputs[j].txid,
+          vout: inputs[j].vout,
+          scriptSig: inputs[j].scriptSig,
+          sequence: inputs[j].sequence,
+          witness: witnessField.stackItems.isNotEmpty ? witnessField : null,
+        );
+      }
     }
     // read locktime
     if (i + 4 > bytes.length) {
-      throw FormatException('Locktime length exceeds remaining bytes');
+      throw FormatException(
+        'Locktime ($i-${i + 4}) exceeds remaining bytes (${bytes.length})',
+      );
     }
     final locktime = buffer.getUint32(i, Endian.little);
 
@@ -341,15 +408,25 @@ class Transaction {
   String toJson() {
     final inputsJson = inputs.map((input) => input.toJson()).join(', ');
     final outputsJson = outputs.map((output) => output.toJson()).join(', ');
-    final witnessJson = witness != null ? witness!.toJson() : 'null';
+    var witnessJson = 'null';
+    if (type() == TxType.segwit) {
+      if (witness != null) {
+        witnessJson = witness!.map((w) => w.toJson()).join(', ');
+      } else {
+        witnessJson = inputs.map((_) => '[]').join(', ');
+      }
+      witnessJson = '[$witnessJson]';
+    }
     return '''{
+      "type": "${type().toString().split('.').last}",
+      "txid": "${txid()}",
       "version": $version,
       "marker": ${marker ?? 'null'},
       "flag": ${flag ?? 'null'},
       "inputs": [$inputsJson],
       "outputs": [$outputsJson],
       "witness": $witnessJson,
-      "locktime": $locktime
+      "locktime": $locktime,
     }''';
   }
 
@@ -361,9 +438,11 @@ class Transaction {
     final outputs = (data['outputs'] as List)
         .map((output) => TxOut.fromJson(output as String))
         .toList();
-    TxWitness? witness;
+    List<TxWitness> witness = [];
     if (data['witness'] != null) {
-      witness = TxWitness.fromJson(data['witness'] as String);
+      witness = (data['witness'] as List)
+          .map((w) => TxWitness.fromJson(w as String))
+          .toList();
     }
     return Transaction(
       version: data['version'] as int,

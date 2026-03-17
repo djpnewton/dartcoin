@@ -5,6 +5,9 @@ import 'ripemd160.dart';
 import 'sha256.dart';
 
 String bytesToHex(Uint8List bytes) {
+  if (bytes.isEmpty) {
+    return '';
+  }
   BigInt value = bytesToBigInt(bytes);
   return value.toRadixString(16).padLeft(bytes.length * 2, '0');
 }
