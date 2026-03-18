@@ -61,7 +61,7 @@ class PeerManager {
 
   Future<void> _peerAddressesReceived(
     Peer peer,
-    List<Address> addresses,
+    List<PeerAddress> addresses,
   ) async {
     // search for peers that support compact block filters
     final suitableAddrs = addresses.where((addr) {

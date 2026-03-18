@@ -57,7 +57,8 @@ typedef PeerStatusEvent =
       PeerStatusChangeReason? reason,
     });
 
-typedef PeerAddressesEvent = void Function(Peer peer, List<Address> addresses);
+typedef PeerAddressesEvent =
+    void Function(Peer peer, List<PeerAddress> addresses);
 
 typedef PeerBlockReceivedEvent = void Function(Peer peer, Block block);
 

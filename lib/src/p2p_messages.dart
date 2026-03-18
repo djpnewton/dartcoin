@@ -715,13 +715,13 @@ class MessageGetAddr extends Message {
   }
 }
 
-class Address {
+class PeerAddress {
   int time;
   int services;
   Uint8List ipAddress; // IPv6 address
   int port;
 
-  Address({
+  PeerAddress({
     required this.time,
     required this.services,
     required this.ipAddress,
@@ -748,7 +748,7 @@ class Address {
     return buffer.toBytes();
   }
 
-  factory Address.fromBytes(Uint8List bytes) {
+  factory PeerAddress.fromBytes(Uint8List bytes) {
     if (bytes.length != 30) {
       throw FormatException('Address bytes must be exactly 30 bytes long');
     }
@@ -766,7 +766,7 @@ class Address {
     offset += 16;
     final port = buffer.getUint16(offset, Endian.big);
 
-    return Address(
+    return PeerAddress(
       time: time,
       services: services,
       ipAddress: ipAddress,
@@ -776,7 +776,7 @@ class Address {
 }
 
 class MessageAddress extends Message {
-  List<Address> addresses;
+  List<PeerAddress> addresses;
 
   MessageAddress({required this.addresses}) {
     if (addresses.isEmpty) {
@@ -800,10 +800,10 @@ class MessageAddress extends Message {
   factory MessageAddress.fromBytes(Uint8List bytes) {
     final cspr = compactSizeParse(bytes);
     var offset = cspr.bytesRead;
-    final addresses = <Address>[];
+    final addresses = <PeerAddress>[];
     while (offset + 30 <= bytes.length) {
       final addrBytes = bytes.sublist(offset, offset + 30);
-      addresses.add(Address.fromBytes(addrBytes));
+      addresses.add(PeerAddress.fromBytes(addrBytes));
       offset += 30;
     }
     if (addresses.length != cspr.value) {
