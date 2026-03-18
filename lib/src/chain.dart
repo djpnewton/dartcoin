@@ -25,6 +25,7 @@ class ChainManager {
   late final Uint8List _genesisBlockFilterHeader;
   final Map<int, Uint8List> _blockHeaderHeightIndex = {};
   final Map<int, Uint8List> _blockFilterHeaderHeightIndex = {};
+  final TxProvider txProvider;
   // block headers
   late ChainEntry _bestChainHead;
   final List<ChainEntry> _chainHeads = [];
@@ -56,6 +57,7 @@ class ChainManager {
     required String blockHeadersFilePath,
     required String blockFilterHeadersFilePath,
     required String blockFiltersFilePath,
+    required this.txProvider,
     this.verbose = false,
   }) : _blockHeaderStore = BlockHeaderStore(blockHeadersFilePath),
        _blockFilterHeaderStore = BlockFilterHeaderStore(
@@ -935,7 +937,7 @@ class ChainManager {
     // get the block inputs to create the filter
     final prevOutputScripts = await BasicBlockFilter.prevOutputScripts(
       block,
-      BlockDnTxProvider(network),
+      txProvider,
     );
     // create the block filter
     final blockFilter = BasicBlockFilter(

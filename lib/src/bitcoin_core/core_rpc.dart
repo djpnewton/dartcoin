@@ -172,8 +172,13 @@ class CoreJsonRpc {
   // raw transaction RPCs
   //
 
-  Future<String> sendRawTransaction(String hexTx) async {
-    final response = await call('sendrawtransaction', [hexTx]);
+  Future<String> getRawTransaction(String txid) async {
+    final response = await call('getrawtransaction', [txid]);
+    return response['result'] as String;
+  }
+
+  Future<String> sendRawTransaction(String txHex) async {
+    final response = await call('sendrawtransaction', [txHex]);
     return response['result'] as String;
   }
 

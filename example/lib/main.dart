@@ -532,8 +532,9 @@ class TestP2pCommand extends Command<void> {
       syncBlockFilterHeaders: syncBlockFilterHeaders,
       syncBlockHeaders: syncBlockHeaders,
       wallet: walletAddresses.isNotEmpty
-          ? Wallet(addresses: walletAddresses, birthdayBlock: birthdayBlock)
+          ? Wallet(addresses: walletAddresses, birthdayBlock: birthdayBlock, txProvider: BlockDnTxProvider(network))
           : null,
+      txProvider: BlockDnTxProvider(network),
     );
     node.add(peer: peer);
   }

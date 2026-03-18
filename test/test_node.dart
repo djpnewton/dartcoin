@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 import '../lib/src/bitcoin_core/core_process.dart';
+import '../lib/src/block_filter.dart';
 import '../lib/src/node.dart';
 import '../lib/src/peer.dart';
 import '../lib/src/common.dart';
@@ -50,7 +51,7 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(network: Network.regtest, dataDir: nodeDataDir);
+    node = Node(network: Network.regtest, dataDir: nodeDataDir, txProvider: RegtestTxProvider(proc1));
   });
   tearDown(() async {
     // shutdown the node
@@ -82,7 +83,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.blockFilterHeaderSynced,
+      PeerStatus.blockFilterGetLatestBlock,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first
@@ -153,7 +154,7 @@ void main() {
     var gotPeerStatus = await node.waitForPeerStatus(
       proc1.p2pHost,
       proc1.p2pPort,
-      PeerStatus.blockFilterHeaderSynced,
+      PeerStatus.blockFilterGetLatestBlock,
     );
     expect(gotPeerStatus, isTrue);
     // connect the second regtest process to the first

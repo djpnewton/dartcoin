@@ -33,7 +33,7 @@ void main() {
   late PrivateKey masterKey;
   setUp(() async {
     // start the regtest process
-    proc1 = CoreProcess(verbose: false, p2pPort: 18444, rpcPort: 18443);
+    proc1 = CoreProcess(verbose: false, p2pPort: 18644, rpcPort: 18643);
     await proc1.start();
     await proc1.waitTillInitialized();
     // generate a mnemonic and master key

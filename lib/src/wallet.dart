@@ -39,6 +39,9 @@ class Wallet {
   /// Required when [addresses] is non-empty.
   final int? birthdayBlock;
 
+  /// TxProvider to fetch transaction details for inputs when processing blocks.
+  final TxProvider txProvider;
+
   /// Block hashes whose compact filter matched [addresses].
   /// Populated by [processBlockFilter]; consumed by the node to request full blocks.
   final List<Uint8List> interestingBlockHashes = [];
@@ -48,6 +51,7 @@ class Wallet {
   Wallet({
     this.addresses = const [],
     this.birthdayBlock,
+    required this.txProvider,
   }) {
     assert(
       !(addresses.isNotEmpty && birthdayBlock == null),

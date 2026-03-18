@@ -25,6 +25,7 @@ class Node {
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
   final Wallet? wallet;
+  final TxProvider txProvider;
   late final int? _startBlock = wallet?.birthdayBlock;
 
   int _requestingBestBlockNumber = 0;
@@ -39,6 +40,7 @@ class Node {
     this.syncBlockHeaders = true,
     this.syncBlockFilterHeaders = true,
     this.wallet,
+    required this.txProvider,
   }) {
     assert(
       !(syncBlockFilterHeaders && !syncBlockHeaders),
@@ -58,6 +60,7 @@ class Node {
       blockHeadersFilePath: blockHeadersFilePath,
       blockFilterHeadersFilePath: blockFilterHeadersFilePath,
       blockFiltersFilePath: blockFiltersFilePath,
+      txProvider: txProvider,
       verbose: verbose,
     );
   }

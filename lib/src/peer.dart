@@ -291,13 +291,13 @@ class Peer {
 
   void _doStatusChange(PeerStatus newStatus, PeerStatusChangeReason reason) {
     // TEMP:TODO: log status change/reason
-    _log.info(
-      'Peer status changed: $newStatus, Reason: $reason',
-      color: LogColor.brightBlue,
-    );
-    // sleep 1s
-    sleep(Duration(seconds: 1));
-
+    if (verbose) {
+      _log.info(
+        'Peer status changing: $newStatus, Reason: $reason',
+        color: LogColor.brightBlue,
+      );
+    }
+    
     // reset any timers
     _clearBfHeadersTimer();
     // check if the status is already the same
@@ -564,9 +564,11 @@ class Peer {
         ///return;
       }
       if (_requestedBlocks.isBlockRequested(message.block.header.hash())) {
-        _log.info(
-          'Received requested block: ${message.block.header.hashNice()}',
-        );
+        if (verbose) {
+          _log.info(
+            'Received requested block: ${message.block.header.hashNice()}',
+          );
+        }
         // we should already have the header for this block if we requested if
         return;
       }
