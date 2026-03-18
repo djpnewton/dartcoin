@@ -5,11 +5,11 @@ import 'ripemd160.dart';
 import 'sha256.dart';
 
 String bytesToHex(Uint8List bytes) {
-  if (bytes.isEmpty) {
-    return '';
+  final buffer = StringBuffer();
+  for (final byte in bytes) {
+    buffer.write(byte.toRadixString(16).padLeft(2, '0'));
   }
-  BigInt value = bytesToBigInt(bytes);
-  return value.toRadixString(16).padLeft(bytes.length * 2, '0');
+  return buffer.toString();
 }
 
 String ibytesToHex(List<int> bytes) {
