@@ -8,6 +8,27 @@ import 'package:dartcoin/dartcoin.dart';
 
 final _log = ColorLogger('main');
 
+class ProfileCommand extends Command<void> {
+  @override
+  final name = 'profile';
+  @override
+  final description = 'Run a specific code area to profile.';
+
+  ProfileCommand();
+
+  @override
+  void run() {
+    while (true) {
+      sleep(Duration(seconds: 1));
+      _log.info('Running profile command. Press Ctrl+C to stop.');
+      // run some code here that you want to profile
+      // for example, you could run a specific benchmark or test function in a loop
+      // or you could run some code that exercises a specific area of the library
+      // and then use the Dart DevTools profiler to analyze the performance
+    }
+  }
+}
+
 class KeyGenCommand extends Command<void> {
   @override
   final name = 'key-gen';
@@ -18,8 +39,7 @@ class KeyGenCommand extends Command<void> {
     argParser.addOption(
       'entropy',
       abbr: 'e',
-      help:
-          'Optional entropy in hex or utf8 format to generate the mnemonic.',
+      help: 'Optional entropy in hex or utf8 format to generate the mnemonic.',
     );
   }
 
@@ -28,8 +48,9 @@ class KeyGenCommand extends Command<void> {
     // try to parse entropy as hex, if fails, use utf8
     final entropyInput = argResults?.option('entropy');
     final Uint8List? entropy = processEntropy(entropyInput);
-    final mnemonic = entropy != null ? mnemonicFromEntropy(entropy) :
-        'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    final mnemonic = entropy != null
+        ? mnemonicFromEntropy(entropy)
+        : 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
     _log.info('Mnemonic words: $mnemonic');
 
     _log.info('Validating mnemonic: ${mnemonicValid(mnemonic)}');
@@ -318,7 +339,11 @@ class VerifyCommand extends Command<void> {
       final pubKeyBytes = hexToBytes(pubKeyRaw);
       final pk = PublicKey.fromPublicKey(pubKeyBytes);
       // verify the signature
-      final result = derVerifyMessage(pk, utf8.encode(message), hexToBytes(signature));
+      final result = derVerifyMessage(
+        pk,
+        utf8.encode(message),
+        hexToBytes(signature),
+      );
       _log.info('Signature valid: $result');
     } catch (e) {
       // if not a valid public key, try to parse it as a Bitcoin address
@@ -478,11 +503,12 @@ class TestP2pCommand extends Command<void> {
         : null;
 
     _log.info(
-      'Preferential Peering: $preferentialPeering, ' 
+      'Preferential Peering: $preferentialPeering, '
       'Sync Block Headers: $syncBlockHeaders, '
       'Sync Block Filter Headers: $syncBlockFilterHeaders, '
       'Wallet Addresses: $walletAddresses'
-      'Birthday Block: $birthdayBlock', color: LogColor.brightBlue
+      'Birthday Block: $birthdayBlock',
+      color: LogColor.brightBlue,
     );
 
     if (walletAddresses.isNotEmpty) {
@@ -532,7 +558,11 @@ class TestP2pCommand extends Command<void> {
       syncBlockFilterHeaders: syncBlockFilterHeaders,
       syncBlockHeaders: syncBlockHeaders,
       wallet: walletAddresses.isNotEmpty
-          ? Wallet(addresses: walletAddresses, birthdayBlock: birthdayBlock, txProvider: BlockDnTxProvider(network))
+          ? Wallet(
+              addresses: walletAddresses,
+              birthdayBlock: birthdayBlock,
+              txProvider: BlockDnTxProvider(network),
+            )
           : null,
       txProvider: BlockDnTxProvider(network),
     );
@@ -650,15 +680,12 @@ class CreateTxCommand extends Command<void> {
       help: 'The amount to send in satoshis.',
       mandatory: true,
     );
-    argParser.addOption(
-      'fee',
-      abbr: 'f',
-      help: 'The fee to pay in satoshis.',
-    );
+    argParser.addOption('fee', abbr: 'f', help: 'The fee to pay in satoshis.');
     argParser.addOption(
       'coins',
       abbr: 'i',
-      help: 'The coins to use as inputs in the format txid:vout (e.g. "txid1:vout1,txid2:vout2").',
+      help:
+          'The coins to use as inputs in the format txid:vout (e.g. "txid1:vout1,txid2:vout2").',
       mandatory: true,
     );
   }
@@ -695,7 +722,9 @@ class CreateTxCommand extends Command<void> {
       return;
     }
     _log.info('Creating transaction...');
-    _log.info('Network: ${network.name}, Recipient: $recipient, Change Recipient: $changeRecipient, Amount: $amount');
+    _log.info(
+      'Network: ${network.name}, Recipient: $recipient, Change Recipient: $changeRecipient, Amount: $amount',
+    );
     _log.info('Coins: $coins');
     // create inputs from coins
     final inputs = coins.split(',').map((coin) {
@@ -708,7 +737,12 @@ class CreateTxCommand extends Command<void> {
       if (vout == null || vout < 0) {
         throw ArgumentError('Invalid vout number: ${parts[1]} in coin: $coin');
       }
-      return TxIn(txid: txid, vout: vout, scriptSig: Uint8List(0), sequence: 0xFFFFFFFF);
+      return TxIn(
+        txid: txid,
+        vout: vout,
+        scriptSig: Uint8List(0),
+        sequence: 0xFFFFFFFF,
+      );
     }).toList();
     // sum input amounts
     var totalInputAmount = 0;
@@ -719,26 +753,38 @@ class CreateTxCommand extends Command<void> {
     }
     _log.info('Total input amount: $totalInputAmount satoshis');
     if (totalInputAmount < amount) {
-      _log.info('Total input amount is less than the amount to send. Please provide sufficient inputs.');
+      _log.info(
+        'Total input amount is less than the amount to send. Please provide sufficient inputs.',
+      );
       return;
     }
     // calc change
     final changeAmount = totalInputAmount - amount - fee;
     if (changeAmount < 0) {
-      _log.info('Total input amount is less than the amount plus fee. Please provide sufficient inputs or reduce the amount/fee.');
+      _log.info(
+        'Total input amount is less than the amount plus fee. Please provide sufficient inputs or reduce the amount/fee.',
+      );
       return;
     }
     if (changeAmount > 0 && changeRecipient != null) {
       _log.info('Change amount: $changeAmount satoshis');
     } else if (changeAmount > 0 && changeRecipient == null) {
-      _log.info('Change amount: $changeAmount satoshis. No change recipient provided, so change would be lost.');
+      _log.info(
+        'Change amount: $changeAmount satoshis. No change recipient provided, so change would be lost.',
+      );
       return;
     }
     // create outputs
     final outputs = [
-      TxOut(value: amount, scriptPubKey: AddressData.parseAddress(recipient).script),
+      TxOut(
+        value: amount,
+        scriptPubKey: AddressData.parseAddress(recipient).script,
+      ),
       if (changeRecipient != null)
-        TxOut(value: changeAmount, scriptPubKey: AddressData.parseAddress(changeRecipient).script),
+        TxOut(
+          value: changeAmount,
+          scriptPubKey: AddressData.parseAddress(changeRecipient).script,
+        ),
     ];
     // create tx
     final tx = Transaction(
@@ -779,8 +825,7 @@ class SignTxCommand extends Command<void> {
     argParser.addOption(
       'entropy',
       abbr: 'e',
-      help:
-          'Entropy in hex or utf8 format to generate the mnemonic.',
+      help: 'Entropy in hex or utf8 format to generate the mnemonic.',
       mandatory: true,
     );
     argParser.addOption(
@@ -831,7 +876,9 @@ class SignTxCommand extends Command<void> {
     try {
       tx = Transaction.fromBytes(hexToBytes(txHex));
     } catch (e) {
-      _log.info('Invalid transaction format. Please provide a valid transaction in hex format.');
+      _log.info(
+        'Invalid transaction format. Please provide a valid transaction in hex format.',
+      );
       _log.info('Error: $e');
       return;
     }
@@ -849,7 +896,9 @@ class SignTxCommand extends Command<void> {
       final pubkeyHash = switch (spkMatch.scriptType) {
         ScriptType.p2pkh => spkMatch.payload,
         ScriptType.p2wpkh => spkMatch.payload,
-        _ => throw ArgumentError('Unsupported script type: ${spkMatch.scriptType}'),
+        _ => throw ArgumentError(
+          'Unsupported script type: ${spkMatch.scriptType}',
+        ),
       };
       // search for the private key that corresponds pubkey hash
       final mnemonic = mnemonicFromEntropy(entropy);
@@ -863,18 +912,27 @@ class SignTxCommand extends Command<void> {
         final childPubKeyHash = hash160(childPubKey);
         if (listEquals(childPubKeyHash, pubkeyHash)) {
           foundKey = childKey;
-          _log.info('Found matching private key for input ${input.txid}:${input.vout} at index $i');
+          _log.info(
+            'Found matching private key for input ${input.txid}:${input.vout} at index $i',
+          );
           break;
         }
       }
       if (foundKey == null) {
-        _log.info('No matching private key found for input ${input.txid}:${input.vout} in the first 100 child keys. Cannot sign this transaction.');
+        _log.info(
+          'No matching private key found for input ${input.txid}:${input.vout} in the first 100 child keys. Cannot sign this transaction.',
+        );
         return;
       }
       privKeys.add(foundKey);
     }
     // sign the transaction
-    final signedTx = signTransaction(tx: tx, privKeys: privKeys, previousOutputs: previousOutputs, fee: fee);
+    final signedTx = signTransaction(
+      tx: tx,
+      privKeys: privKeys,
+      previousOutputs: previousOutputs,
+      fee: fee,
+    );
     _log.info('Transaction signed');
     _log.info('Hex: ${bytesToHex(signedTx.toBytes())}');
   }
@@ -925,7 +983,9 @@ class VerifyTxCommand extends Command<void> {
     try {
       tx = Transaction.fromBytes(hexToBytes(txHex));
     } catch (e) {
-      _log.info('Invalid transaction format. Please provide a valid transaction in hex format.');
+      _log.info(
+        'Invalid transaction format. Please provide a valid transaction in hex format.',
+      );
       return;
     }
     // print transaction details
@@ -952,6 +1012,7 @@ void main(List<String> args) {
           'dartcoin',
           'A command line interface for the dartcoin library.',
         )
+        ..addCommand(ProfileCommand())
         ..addCommand(KeyGenCommand())
         ..addCommand(SignCommand())
         ..addCommand(VerifyCommand())

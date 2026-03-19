@@ -4,12 +4,9 @@ import 'dart:typed_data';
 
 import 'package:benchmark_runner/benchmark_runner.dart';
 
-import '../lib/src/utils.dart';
 import '../lib/src/ripemd160.dart';
 import '../lib/src/sha256.dart';
 import '../lib/src/sha512.dart';
-import '../lib/src/secp256k1.dart';
-import '../lib/src/keys.dart';
 
 void main() {
   group('Ripemd160', () {
@@ -52,34 +49,6 @@ void main() {
     data = Uint8List.fromList(List.filled(1000, 255));
     benchmark('1000 bytes all 255', () {
       sha512(data);
-    });
-  });
-  group('secp256k1', () {
-    benchmark('multiply generator by 0xffff', () {
-      Secp256k1Point.generator.multiply(BigInt.from(0xffff));
-    });
-    benchmark('multiply generator by N', () {
-      Secp256k1Point.generator.multiply(Secp256k1Point.n);
-    });
-  });
-  group('keys', () {
-    var privateKey = hexToBytes(
-      'ff00000000000000000000000000000000000000000000000000000000000000',
-    );
-    benchmark('public key from "ff0000.."', () {
-      PrivateKey.pubkeyFromPrivateKey(privateKey);
-    });
-    privateKey = hexToBytes(
-      '00000000000000000000000000000000000000000000000000000000000000ff',
-    );
-    benchmark('public key from "..0000ff"', () {
-      PrivateKey.pubkeyFromPrivateKey(privateKey);
-    });
-    privateKey = hexToBytes(
-      'dfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-    );
-    benchmark('public key from "dfffff.."', () {
-      PrivateKey.pubkeyFromPrivateKey(privateKey);
     });
   });
 }
