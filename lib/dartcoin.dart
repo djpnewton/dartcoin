@@ -3,6 +3,7 @@ library;
 export 'src/address.dart';
 export 'src/base58.dart';
 export 'src/bech32.dart';
+export 'src/block.dart';
 export 'src/common.dart';
 export 'src/keys.dart';
 export 'src/logc.dart';
