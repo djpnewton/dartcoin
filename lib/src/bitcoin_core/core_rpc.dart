@@ -60,7 +60,7 @@ class CoreJsonRpc {
       'jsonrpc': '2.0',
       'id': requestId,
       'method': method,
-      if (params != null) 'params': params,
+      'params': ?params,
     };
 
     final response = await _client.post(

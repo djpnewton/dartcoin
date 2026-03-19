@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'common.dart';
+import 'lazy.dart';
 import 'utils.dart';
 import 'transaction.dart';
 
@@ -116,11 +117,33 @@ class BlockHeader {
 
 class Block {
   BlockHeader header;
+
   List<Transaction> transactions;
 
   Block({required this.header, required this.transactions});
 
-  Uint8List hash() => hash256(toBytes());
+  Block._lazy({
+    required this.header,
+    required Uint8List bytes,
+    required int txOffset,
+    required int txCount,
+  }) : transactions = LazyList<Transaction>(
+         bytes: bytes,
+         count: txCount,
+         firstOffset: txOffset,
+         parse: Transaction.fromBytes,
+         sizeOf: (tx) => tx.toBytes().length,
+       );
+
+  int get transactionCount => transactions.length;
+
+  // When the transactions list is still the original lazy list, we can hash
+  // the backing bytes directly without re-serialising.
+  Uint8List hash() {
+    final txList = transactions;
+    if (txList is LazyList<Transaction>) return hash256(txList.bytes);
+    return hash256(toBytes());
+  }
 
   Uint8List toBytes() {
     final buffer = BytesBuilder();
@@ -132,7 +155,7 @@ class Block {
     return buffer.toBytes();
   }
 
-  factory Block.fromBytes(Uint8List bytes) {
+  factory Block.fromBytes(Uint8List bytes, {bool lazy = true}) {
     if (bytes.length < BlockHeader.blockHeaderSize + 1) {
       throw FormatException(
         'Block bytes must be at least ${BlockHeader.blockHeaderSize + 1} bytes long',
@@ -143,8 +166,19 @@ class Block {
     );
     final cspr = compactSizeParse(bytes.sublist(BlockHeader.blockHeaderSize));
     final transactionCount = cspr.value;
+    final txOffset = BlockHeader.blockHeaderSize + cspr.bytesRead;
+
+    if (lazy) {
+      return Block._lazy(
+        header: header,
+        bytes: bytes,
+        txOffset: txOffset,
+        txCount: transactionCount,
+      );
+    }
+
     final transactions = <Transaction>[];
-    int offset = 80 + cspr.bytesRead;
+    int offset = txOffset;
     for (int i = 0; i < transactionCount; i++) {
       final tx = Transaction.fromBytes(bytes.sublist(offset));
       transactions.add(tx);

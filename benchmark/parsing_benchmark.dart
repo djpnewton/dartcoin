@@ -14,7 +14,7 @@ void main() async {
     asyncBenchmark(
       'parse mainnet block 899999 (633 txs)',
       () async {
-        Block.fromBytes(block899999Bytes);
+        Block.fromBytes(block899999Bytes, lazy: false);
       },
       setup: () async {
         final url =
@@ -28,7 +28,7 @@ void main() async {
     asyncBenchmark(
       'parse mainnet block 200000 (388 txs)',
       () async {
-        Block.fromBytes(block200000Bytes);
+        Block.fromBytes(block200000Bytes, lazy: false);
       },
       setup: () async {
         final url =
