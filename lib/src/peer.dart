@@ -236,9 +236,13 @@ class Peer {
     };
   }
 
-  static Future<String> ipFromDnsSeed(
+  /// Queries all DNS seeds for the given [network] concurrently and returns a
+  /// deduplicated list of IPv4 addresses. Up to [maxPerSeed] addresses are
+  /// sampled from each seed. Seeds that fail are silently skipped.
+  static Future<List<String>> ipsFromDnsSeeds(
     Network network, {
     bool verbose = false,
+    int maxPerSeed = 3,
   }) async {
     final seeds = switch (network) {
       Network.mainnet => [
@@ -259,35 +263,41 @@ class Peer {
       Network.testnet4 => [
         'seed.testnet4.bitcoin.sprovoost.nl',
         'seed.testnet4.achownodes.xyz',
+        'seed.testnet4.wiz.biz',
       ],
       Network.regtest => throw UnsupportedError(
         'No DNS seeds available for regtest network',
       ),
     };
-    final randomSeed =
-        seeds[DateTime.now().millisecondsSinceEpoch % seeds.length];
-    if (verbose) {
-      _log.info('Using DNS seed: $randomSeed');
-    }
-    try {
-      final addresses = await InternetAddress.lookup(
-        randomSeed,
-        type: InternetAddressType.IPv4,
-      );
-      if (addresses.isNotEmpty && addresses[0].rawAddress.isNotEmpty) {
-        if (verbose) {
-          _log.info('Found ${addresses.length} addresses for seed $randomSeed');
+
+    final results = await Future.wait(
+      seeds.map((seed) async {
+        try {
+          final addresses = await InternetAddress.lookup(
+            seed,
+            type: InternetAddressType.IPv4,
+          );
+          if (verbose) {
+            _log.info('Found ${addresses.length} addresses for seed $seed');
+          }
+          final ips = addresses.map((a) => a.address).toList()..shuffle();
+          return ips.take(maxPerSeed).toList();
+        } catch (e) {
+          if (verbose) {
+            _log.info('Failed to query DNS seed $seed: $e');
+          }
+          return <String>[];
         }
-        final randomAddress =
-            addresses[DateTime.now().millisecondsSinceEpoch % addresses.length];
-        _log.info('Random address: ${randomAddress.address}');
-        return randomAddress.address;
-      }
-    } catch (e) {
-      _log.severe('Error occurred while looking up DNS seed: $e');
-      rethrow;
+      }),
+    );
+
+    final allIps = results.expand((ips) => ips).toSet().toList();
+    if (verbose) {
+      _log.info(
+        'Discovered ${allIps.length} unique IPs from ${seeds.length} DNS seeds.',
+      );
     }
-    throw Exception('No valid IP address found for DNS seed: $randomSeed');
+    return allIps;
   }
 
   void _doStatusChange(PeerStatus newStatus, PeerStatusChangeReason reason) {

@@ -33,6 +33,11 @@ class Node {
   Uint8List _requestingBlockFiltersCurrentTargetHash = Uint8List(0);
   int _requestingBlockFiltersCurrentTargetHeight = 0;
 
+  /// Blocks received out-of-order while in [PeerStatus.getInterestingBlocks].
+  final Map<String, Block> _pendingInterestingBlocks = {};
+  int _interestingBlocksProcessedCount = 0;
+  bool _isDrainingInterestingBlocks = false;
+
   Node({
     required this.network,
     String? dataDir,
@@ -212,6 +217,10 @@ class Node {
       case PeerStatus.blockFilterSynced:
         break;
       case PeerStatus.getInterestingBlocks:
+        // Reset ordering state whenever a new batch of interesting blocks is requested.
+        _pendingInterestingBlocks.clear();
+        _interestingBlocksProcessedCount = 0;
+        _isDrainingInterestingBlocks = false;
         break;
       case PeerStatus.disconnected:
         _peers.remove(peer);
@@ -296,12 +305,43 @@ class Node {
         }
       }
     } else if (peer.status == PeerStatus.getInterestingBlocks) {
-      if (verbose) {
-        _log.info(
-          'Received block ${block.header.hashNice()} from peer ${peer.ip}:${peer.port}, delegating to wallet',
-        );
+      // Buffer the block and process in interestingBlockHashes (height) order.
+      _pendingInterestingBlocks[block.header.hash().toHex()] = block;
+
+      // Guard against re-entrancy: if an await inside the loop below suspends
+      // this function, a newly arrived block will be buffered above and the
+      // already-running loop will pick it up on its next iteration.
+      if (_isDrainingInterestingBlocks) return;
+      _isDrainingInterestingBlocks = true;
+      try {
+        final ordered = wallet?.interestingBlockHashes ?? [];
+        while (_interestingBlocksProcessedCount < ordered.length) {
+          final nextHash = ordered[_interestingBlocksProcessedCount];
+          final nextBlock = _pendingInterestingBlocks[nextHash.toHex()];
+          if (nextBlock == null) break; // not yet received
+          _pendingInterestingBlocks.remove(nextHash.toHex());
+          _interestingBlocksProcessedCount++;
+          final startTime = DateTime.now();
+          if (verbose) {
+            _log.info(
+              'Processing interesting block ${nextBlock.header.hashNice()} ($_interestingBlocksProcessedCount/${ordered.length}) from peer ${peer.ip}:${peer.port}',
+              color: LogColor.brightCyan,
+            );
+          }
+          await wallet?.processBlock(nextBlock, network, verbose: verbose);
+          if (verbose) {
+            _log.info(
+              'Finished processing interesting block ${nextBlock.header.hashNice()} ($_interestingBlocksProcessedCount/${ordered.length}) from peer ${peer.ip}:${peer.port}',
+              color: LogColor.brightCyan,
+            );
+            _log.info(
+              'Time since starting processing block: ${DateTime.now().difference(startTime)}',
+            );
+          }
+        }
+      } finally {
+        _isDrainingInterestingBlocks = false;
       }
-      await wallet?.processBlock(block, network, verbose: verbose);
     }
   }
 
@@ -428,6 +468,10 @@ class Node {
       return null; // height out of range or not indexed
     }
     return headerHashNice(hash);
+  }
+
+  int? blockHeightForHash(String hash) {
+    return _chainManager.blockHeightForHash(hash.toBytes().reverse());
   }
 
   List<ChainEntry> chainHeads() {

@@ -436,13 +436,6 @@ class TestP2pCommand extends Command<void> {
       },
     );
     argParser.addFlag(
-      'pref-peering',
-      abbr: 'e',
-      help:
-          'Enable preferential peering to find peers that support compact block filters.',
-      defaultsTo: true,
-    );
-    argParser.addFlag(
       'sync-block-headers',
       abbr: 'b',
       help: 'Enable syncing of block headers.',
@@ -491,7 +484,6 @@ class TestP2pCommand extends Command<void> {
         return;
       }
     }
-    final preferentialPeering = argResults?.flag('pref-peering') ?? true;
     final syncBlockHeaders = argResults?.flag('sync-block-headers') ?? true;
     final syncBlockFilterHeaders =
         argResults?.flag('sync-block-filter-headers') ?? true;
@@ -503,11 +495,11 @@ class TestP2pCommand extends Command<void> {
         : null;
 
     _log.info(
-      'Preferential Peering: $preferentialPeering, '
-      'Sync Block Headers: $syncBlockHeaders, '
-      'Sync Block Filter Headers: $syncBlockFilterHeaders, '
-      'Wallet Addresses: $walletAddresses'
-      'Birthday Block: $birthdayBlock',
+      '\n'
+      '    Sync Block Headers: $syncBlockHeaders\n'
+      '    Sync Block Filter Headers: $syncBlockFilterHeaders\n'
+      '    Wallet Addresses: $walletAddresses\n'
+      '    Birthday Block: $birthdayBlock',
       color: LogColor.brightBlue,
     );
 
@@ -532,11 +524,7 @@ class TestP2pCommand extends Command<void> {
       }
     }
 
-    final peerManager = PeerManager(
-      network: network,
-      verbose: true,
-      preferentialPeering: preferentialPeering,
-    );
+    final peerManager = PeerManager(network: network, verbose: true);
     Peer? peer;
     if (ip == null || port == null) {
       _log.info('Using dns seed to find peer.');
@@ -1005,7 +993,7 @@ class VerifyTxCommand extends Command<void> {
 }
 
 void main(List<String> args) {
-  initGlobalLogger();
+  initConsoleLogger();
 
   final runner =
       CommandRunner<void>(

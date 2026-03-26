@@ -825,6 +825,15 @@ class ChainManager {
     return _blockHeaderHeightIndex[height];
   }
 
+  int? blockHeightForHash(Uint8List hash) {
+    for (final entry in _blockHeaderHeightIndex.entries) {
+      if (compareHashes(entry.value, hash)) {
+        return entry.key;
+      }
+    }
+    return null; // hash not found
+  }
+
   Uint8List? blockFilterHeaderForHeight(int height) {
     if (height < 0 || !_blockFilterHeaderHeightIndex.containsKey(height)) {
       return null; // height out of range or not indexed

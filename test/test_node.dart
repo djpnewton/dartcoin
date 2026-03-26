@@ -9,7 +9,6 @@ import '../lib/src/block_filter.dart';
 import '../lib/src/node.dart';
 import '../lib/src/peer.dart';
 import '../lib/src/common.dart';
-import '../lib/src/logc.dart';
 
 int _getTimestampOfGenesisInHeaderFile(Node node) {
   expect(File(node.blockHeadersFilePath).existsSync(), isTrue);
@@ -27,7 +26,6 @@ int _getTimestampOfGenesisInHeaderFile(Node node) {
 }
 
 void main() {
-  initGlobalLogger();
   final dummyAddr1 = 'mgTgHVFXFdMEJiMmLhGrxu75waDYjCjDvN';
   final dummyAddr2 = 'mjcNxNEUrMs29U3wSdd7UZ54KGweZAehn6';
   late CoreProcess proc1;
@@ -51,7 +49,11 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(network: Network.regtest, dataDir: nodeDataDir, txProvider: RegtestTxProvider(proc1));
+    node = Node(
+      network: Network.regtest,
+      dataDir: nodeDataDir,
+      txProvider: RegtestTxProvider(proc1),
+    );
   });
   tearDown(() async {
     // shutdown the node

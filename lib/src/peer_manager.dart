@@ -17,13 +17,8 @@ class PeerCandidate {
 class PeerManager {
   final Network network;
   final bool verbose;
-  final bool preferentialPeering;
 
-  PeerManager({
-    required this.network,
-    this.verbose = false,
-    this.preferentialPeering = false,
-  });
+  PeerManager({required this.network, this.verbose = false});
 
   static const int _maxAttempts = 5;
   int _count = 0;
@@ -132,60 +127,127 @@ class PeerManager {
     return _peerCandidates;
   }
 
+  // Number of candidates to attempt concurrently in each batch.
+  static const int _concurrency = 6;
+
+  /// Tries [candidates] concurrently in batches of [_concurrency]. Returns the
+  /// first [Peer] that completes a handshake and supports compact block
+  /// filters, disconnecting all losers. Returns `null` if all fail.
+  Future<Peer?> _raceConnections(List<PeerCandidate> candidates) async {
+    for (var i = 0; i < candidates.length; i += _concurrency) {
+      final batch = candidates.sublist(
+        i,
+        (i + _concurrency).clamp(0, candidates.length),
+      );
+      if (verbose) {
+        _log.info(
+          'Racing batch of ${batch.length} connection(s): '
+          '${batch.map((c) => '${c.ip}:${c.port}').join(', ')}',
+        );
+      }
+
+      // Launch all connections in the batch concurrently.
+      final futures = batch.map((c) => _connectPeer(c)).toList();
+      final peers = await Future.wait(futures);
+
+      Peer? winner;
+      for (final peer in peers) {
+        if (winner == null &&
+            peer.status == PeerStatus.handshakeComplete &&
+            peer.nodeCompactFiltersSupport) {
+          winner = peer;
+        } else {
+          // Disconnect any peer we are not keeping.
+          if (peer.status != PeerStatus.disconnected) {
+            peer.disconnect();
+          }
+        }
+      }
+
+      if (winner != null) {
+        if (verbose) {
+          _log.info(
+            'Connected to peer ${winner.ip}:${winner.port} supporting compact block filters.',
+          );
+        }
+        return winner;
+      }
+    }
+    return null;
+  }
+
+  /// Discovers peers by querying all DNS seeds concurrently, then attempts up
+  /// to [_concurrency] connections at a time until a suitable peer is found.
+  /// If no suitable peer found, a secondary sweep is made using
+  /// addresses advertised by peers that completed the handshake but lack
+  /// compact-filter support. Retries up to [_maxAttempts] times.
   Future<Peer?> findPeer() async {
     _count += 1;
-    // get peer info from dns seed if not provided
-    final ip = await Peer.ipFromDnsSeed(network, verbose: true);
     final port = Peer.defaultPort(network);
-    // try and handshake with the peer
-    final peer = await _connectPeer(PeerCandidate(ip: ip, port: port));
-    if (peer.status == PeerStatus.handshakeComplete) {
-      if (verbose) {
-        _log.info('Peer $ip:$port handshake complete.');
-      }
-      if (peer.nodeCompactFiltersSupport) {
-        return peer;
-      }
-      if (verbose) {
-        _log.info('Peer $ip:$port does not support compact block filters.');
-      }
-      // ask for more peers if preferential peering is enabled
-      if (preferentialPeering) {
-        final newPeerCandidates = await _requestPeerCandidates(peer);
-        if (peer.status != PeerStatus.disconnected) {
-          peer.disconnect();
-        }
-        for (final newPeerCandidate in newPeerCandidates) {
-          if (verbose) {
-            _log.info(
-              'Attempting connection to new candidate ${newPeerCandidate.ip}:${newPeerCandidate.port}...',
-            );
-          }
-          final newPeer = await _connectPeer(newPeerCandidate);
-          if (newPeer.status == PeerStatus.handshakeComplete &&
-              newPeer.nodeCompactFiltersSupport) {
-            if (verbose) {
-              _log.info(
-                'Connected to new peer ${newPeer.ip}:${newPeer.port} supporting compact block filters.',
-              );
-            }
-            return newPeer;
-          }
-          if (newPeer.status != PeerStatus.disconnected) {
-            newPeer.disconnect();
-          }
-        }
-      }
+
+    // query every DNS seed concurrently
+    if (verbose) {
+      _log.info(
+        'Querying all DNS seeds concurrently (attempt $_count/$_maxAttempts)...',
+      );
     }
-    if (peer.status != PeerStatus.disconnected) {
-      peer.disconnect();
-    }
-    // failed, try again if attempts remain
-    if (_count < _maxAttempts) {
-      return findPeer();
-    } else {
-      _log.warning('Max attempts reached. Giving up.');
+    final List<String> seedIps;
+    try {
+      seedIps = await Peer.ipsFromDnsSeeds(network, verbose: verbose);
+    } catch (e) {
+      _log.warning('Failed to gather DNS seed candidates: $e');
+      if (_count < _maxAttempts) return findPeer();
       return null;
     }
+
+    if (seedIps.isEmpty) {
+      _log.warning('No seed IPs discovered.');
+      if (_count < _maxAttempts) return findPeer();
+      return null;
+    }
+
+    final seedCandidates = seedIps
+        .map((ip) => PeerCandidate(ip: ip, port: port))
+        .toList();
+
+    // race seed candidates
+    final winner = await _raceConnections(seedCandidates);
+    if (winner != null) return winner;
+
+    // peers of a peer
+    if (verbose) {
+      _log.info(
+        'No suitable peer found in seed batch. '
+        'Attempting to expand list of peers...',
+      );
+    }
+    // reconnect to any one seed peer just enough to get an addr list.
+    for (final candidate in seedCandidates.take(_concurrency)) {
+      final probe = await _connectPeer(candidate);
+      if (probe.status == PeerStatus.handshakeComplete) {
+        final newCandidates = await _requestPeerCandidates(probe);
+        if (probe.status != PeerStatus.disconnected) {
+          probe.disconnect();
+        }
+        if (newCandidates.isNotEmpty) {
+          final expandedWinner = await _raceConnections(newCandidates);
+          if (expandedWinner != null) return expandedWinner;
+        }
+        break;
+      }
+      if (probe.status != PeerStatus.disconnected) {
+        probe.disconnect();
+      }
+    }
+
+    // retry
+    if (_count < _maxAttempts) {
+      if (verbose) {
+        _log.info('No suitable peer found. Retrying...');
+      }
+      return findPeer();
+    }
+    _log.warning('Max attempts reached. Giving up.');
+    return null;
   }
 }
