@@ -29,7 +29,7 @@ class ChainStoreSqlite implements ChainStore {
   }
 
   @override
-  bool exists() {
+  Future<bool> exists() async {
     final result = db.select(
       "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
       [tableName],
@@ -38,27 +38,27 @@ class ChainStoreSqlite implements ChainStore {
   }
 
   @override
-  bool empty() {
-    if (!exists()) return true;
+  Future<bool> empty() async {
+    if (!await exists()) return true;
     final result = db.select('SELECT COUNT(*) AS c FROM "$tableName"');
     return (result.first['c'] as int) == 0;
   }
 
   @override
-  void delete() {
+  Future<void> delete() async {
     db.execute('DROP TABLE IF EXISTS "$tableName"');
   }
 
   @override
-  List<String> readLines() {
-    if (!exists()) return [];
+  Future<List<String>> readLines() async {
+    if (!await exists()) return [];
     final rows = db.select('SELECT line FROM "$tableName" ORDER BY id');
     return rows.map((r) => r['line'] as String).toList();
   }
 
   @override
-  void writeAll(String content) {
-    if (exists()) {
+  Future<void> writeAll(String content) async {
+    if (await exists()) {
       throw StateError('ChainStoreSqlite table "$tableName" already exists');
     }
     _ensureTable();
@@ -80,7 +80,7 @@ class ChainStoreSqlite implements ChainStore {
   }
 
   @override
-  void append(String content) {
+  Future<void> append(String content) async {
     _ensureTable();
     final lines = content.split('\n');
     final stmt = db.prepare('INSERT INTO "$tableName" (line) VALUES (?)');
@@ -111,7 +111,10 @@ class BlockStoreSqlite implements BlockStore {
   final Database db;
   final String tableName;
 
-  BlockStoreSqlite(this.db, this.tableName) {
+  BlockStoreSqlite(this.db, this.tableName);
+
+  @override
+  Future<void> init() async {
     db.execute('''
       CREATE TABLE IF NOT EXISTS "$tableName" (
         hash          TEXT PRIMARY KEY,
@@ -122,7 +125,7 @@ class BlockStoreSqlite implements BlockStore {
   }
 
   @override
-  bool contains(Uint8List blockHash) {
+  Future<bool> contains(Uint8List blockHash) async {
     final result = db.select('SELECT 1 FROM "$tableName" WHERE hash = ?', [
       blockHash.toHex(),
     ]);
@@ -130,7 +133,7 @@ class BlockStoreSqlite implements BlockStore {
   }
 
   @override
-  void store(Block block) {
+  Future<void> store(Block block) async {
     final hashHex = block.hash().toHex();
     db.execute(
       'INSERT OR IGNORE INTO "$tableName" (hash, bytes, last_accessed) VALUES (?, ?, ?)',
@@ -139,7 +142,7 @@ class BlockStoreSqlite implements BlockStore {
   }
 
   @override
-  Block? read(Uint8List blockHash) {
+  Future<Block?> read(Uint8List blockHash) async {
     final hashHex = blockHash.toHex();
     final rows = db.select('SELECT bytes FROM "$tableName" WHERE hash = ?', [
       hashHex,

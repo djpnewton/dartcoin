@@ -81,18 +81,18 @@ class BlockFilterEntry {
 /// Abstract backend used by [BlockHeaderStore], [BlockFilterHeaderStore] and
 /// [BlockFilterStore].  Implementations are not required to use the file system.
 abstract class ChainStore {
-  bool exists();
-  bool empty();
-  void delete();
+  Future<bool> exists();
+  Future<bool> empty();
+  Future<void> delete();
 
   /// Return all stored lines (including any header line).
-  List<String> readLines();
+  Future<List<String>> readLines();
 
   /// Create the storage and write [content].  Throws if storage already exists.
-  void writeAll(String content);
+  Future<void> writeAll(String content);
 
   /// Append [content] to existing storage.
-  void append(String content);
+  Future<void> append(String content);
 }
 
 class BlockHeaderStore {
@@ -101,16 +101,16 @@ class BlockHeaderStore {
 
   BlockHeaderStore(this._backend, {this.verbose = false});
 
-  bool exists() => _backend.exists();
-  bool empty() => _backend.empty();
-  void delete() => _backend.delete();
+  Future<bool> exists() => _backend.exists();
+  Future<bool> empty() => _backend.empty();
+  Future<void> delete() => _backend.delete();
 
-  List<BlockHeader> read() {
-    if (!_backend.exists()) {
+  Future<List<BlockHeader>> read() async {
+    if (!await _backend.exists()) {
       throw StateError('Block headers storage does not exist');
     }
     final headers = <BlockHeader>[];
-    for (final line in _backend.readLines()) {
+    for (final line in await _backend.readLines()) {
       if (line.startsWith('height,timestamp,hash,header')) continue;
       final fields = line.split(',');
       if (fields.length == 4) {
@@ -127,7 +127,7 @@ class BlockHeaderStore {
       ',${headerHashNice(entry.header.hash())}'
       ',${entry.header.toBytes().toHex()}';
 
-  void write(List<ChainEntry> chainEntries) {
+  Future<void> write(List<ChainEntry> chainEntries) async {
     if (chainEntries.first.previous != null) {
       throw StateError(
         'First entry must be the genesis block when writing entire headers',
@@ -137,11 +137,11 @@ class BlockHeaderStore {
     for (final entry in chainEntries) {
       buf.writeln(_headerEntry(entry));
     }
-    _backend.writeAll(buf.toString());
+    await _backend.writeAll(buf.toString());
     if (verbose) _log.info('Block headers written');
   }
 
-  void append(List<ChainEntry> chainEntries) {
+  Future<void> append(List<ChainEntry> chainEntries) async {
     if (chainEntries.isEmpty) {
       if (verbose) _log.info('No new block headers to append');
       return;
@@ -152,7 +152,7 @@ class BlockHeaderStore {
       );
     }
     // Height-continuity check.
-    final lines = _backend.readLines();
+    final lines = await _backend.readLines();
     if (lines.isEmpty) throw StateError('Storage is empty, cannot append');
     final lastHeight = int.tryParse(lines.last.split(',')[0]);
     if (lastHeight == null) throw StateError('Invalid last height in storage');
@@ -167,7 +167,7 @@ class BlockHeaderStore {
     for (final entry in chainEntries) {
       buf.writeln(_headerEntry(entry));
     }
-    _backend.append(buf.toString());
+    await _backend.append(buf.toString());
     if (verbose) _log.info('Block headers appended');
   }
 }
@@ -178,16 +178,16 @@ class BlockFilterHeaderStore {
 
   BlockFilterHeaderStore(this._backend, {this.verbose = false});
 
-  bool exists() => _backend.exists();
-  bool empty() => _backend.empty();
-  void delete() => _backend.delete();
+  Future<bool> exists() => _backend.exists();
+  Future<bool> empty() => _backend.empty();
+  Future<void> delete() => _backend.delete();
 
-  List<Uint8List> read() {
-    if (!_backend.exists()) {
+  Future<List<Uint8List>> read() async {
+    if (!await _backend.exists()) {
       throw StateError('Block filter headers storage does not exist');
     }
     final headers = <Uint8List>[];
-    for (final line in _backend.readLines()) {
+    for (final line in await _backend.readLines()) {
       if (line.startsWith('height,header')) continue;
       final fields = line.split(',');
       if (fields.length == 2) headers.add(fields[1].toBytes());
@@ -199,7 +199,7 @@ class BlockFilterHeaderStore {
   String _headerEntry(BlockFilterHeaderEntry entry) =>
       '${entry.height.toString().padLeft(6, '0')},${entry.header.toHex()}';
 
-  void write(List<BlockFilterHeaderEntry> entries) {
+  Future<void> write(List<BlockFilterHeaderEntry> entries) async {
     if (entries.isEmpty) {
       if (verbose) _log.info('No block filter headers to write');
       return;
@@ -208,11 +208,11 @@ class BlockFilterHeaderStore {
     for (final entry in entries) {
       buf.writeln(_headerEntry(entry));
     }
-    _backend.writeAll(buf.toString());
+    await _backend.writeAll(buf.toString());
     if (verbose) _log.info('Block filter headers written');
   }
 
-  void append(List<BlockFilterHeaderEntry> entries) {
+  Future<void> append(List<BlockFilterHeaderEntry> entries) async {
     if (entries.isEmpty) {
       if (verbose) _log.info('No new block filter headers to append');
       return;
@@ -223,7 +223,7 @@ class BlockFilterHeaderStore {
       );
     }
     // Height-continuity check.
-    final lines = _backend.readLines();
+    final lines = await _backend.readLines();
     if (lines.isEmpty) throw StateError('Storage is empty, cannot append');
     final lastHeight = int.tryParse(lines.last.split(',')[0]);
     if (lastHeight == null) throw StateError('Invalid last height in storage');
@@ -238,7 +238,7 @@ class BlockFilterHeaderStore {
     for (final entry in entries) {
       buf.writeln(_headerEntry(entry));
     }
-    _backend.append(buf.toString());
+    await _backend.append(buf.toString());
     if (verbose) _log.info('Block filter headers appended');
   }
 }
@@ -255,13 +255,18 @@ class BlockFilterStore {
   final bool verbose;
   final List<BlockFilterEntry> entries = [];
   int? _writeHead;
+  bool _initialized = false;
 
-  BlockFilterStore(this._backend, {this.verbose = false}) {
-    _writeHead = _scanWriteHead();
-  }
+  BlockFilterStore(this._backend, {this.verbose = false});
 
   /// Height of the last flushed filter, or null if nothing stored yet.
   int? get writeHead => _writeHead;
+
+  Future<void> init() async {
+    if (_initialized) return;
+    _writeHead = await _scanWriteHead();
+    _initialized = true;
+  }
 
   /// Append a filter to the in-memory list.
   /// Skips entries already on disk or already in the list (duplicate guard).
@@ -271,9 +276,9 @@ class BlockFilterStore {
     entries.add(entry);
   }
 
-  int? _scanWriteHead() {
-    if (!_backend.exists() || _backend.empty()) return null;
-    final lines = _backend.readLines();
+  Future<int?> _scanWriteHead() async {
+    if (!await _backend.exists() || await _backend.empty()) return null;
+    final lines = await _backend.readLines();
     for (var i = lines.length - 1; i >= 0; i--) {
       final entry = _parseLine(lines[i]);
       if (entry != null) return entry.height;
@@ -300,10 +305,9 @@ class BlockFilterStore {
   }
 
   /// Read all stored filters at or above [fromHeight].
-  List<BlockFilterEntry> readFrom(int fromHeight) {
-    if (!_backend.exists() || _backend.empty()) return [];
-    return _backend
-        .readLines()
+  Future<List<BlockFilterEntry>> readFrom(int fromHeight) async {
+    if (!await _backend.exists() || await _backend.empty()) return [];
+    return (await _backend.readLines())
         .map(_parseLine)
         .whereType<BlockFilterEntry>()
         .where((e) => e.height >= fromHeight)
@@ -312,19 +316,19 @@ class BlockFilterStore {
 
   /// Flush all entries above [writeHead] to the backend in a single write.
   /// Creates storage on first call; appends sequentially thereafter.
-  void flush() {
+  Future<void> flush() async {
     final toWrite = _writeHead == null
         ? entries
         : entries.where((e) => e.height > _writeHead!).toList();
     if (toWrite.isEmpty) return;
 
     final buf = StringBuffer();
-    if (!_backend.exists()) {
+    if (!await _backend.exists()) {
       buf.write('height,blockHash,filterBytes\n');
       for (final e in toWrite) {
         buf.write('${_entryToLine(e)}\n');
       }
-      _backend.writeAll(buf.toString());
+      await _backend.writeAll(buf.toString());
     } else {
       final expected = _writeHead == null ? null : _writeHead! + 1;
       if (expected != null && toWrite.first.height != expected) {
@@ -336,7 +340,7 @@ class BlockFilterStore {
       for (final e in toWrite) {
         buf.write('${_entryToLine(e)}\n');
       }
-      _backend.append(buf.toString());
+      await _backend.append(buf.toString());
     }
 
     _writeHead = toWrite.last.height;
@@ -351,7 +355,8 @@ class BlockFilterStore {
 /// Abstract store for full serialised blocks.
 /// Implementations are not required to use the file system.
 abstract class BlockStore {
-  bool contains(Uint8List blockHash);
-  void store(Block block);
-  Block? read(Uint8List blockHash);
+  Future<void> init();
+  Future<bool> contains(Uint8List blockHash);
+  Future<void> store(Block block);
+  Future<Block?> read(Uint8List blockHash);
 }

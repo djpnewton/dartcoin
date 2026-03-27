@@ -70,7 +70,9 @@ class ChainManager {
        _blockFilterStore = BlockFilterStore(
          blockFiltersChainStore,
          verbose: verbose,
-       ) {
+       );
+
+  Future<void> init() async {
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
     final genesisFilter = BasicBlockFilter(
@@ -82,12 +84,13 @@ class ChainManager {
       BasicBlockFilter.genesisPreviousHeader,
     );
     // init best heads
-    _bestChainHead = _initBestHeader(network);
+    _bestChainHead = await _initBestHeader(network);
     _updateBlockHeaderHeightIndex();
     _chainHeads.add(_bestChainHead);
-    _bestBlockFilterHead = _initBestBlockFilterHeaderHead(network);
+    _bestBlockFilterHead = await _initBestBlockFilterHeaderHead(network);
     _updateBlockFilterHeaderHeightIndex();
     // block filters – write head is initialised from file inside BlockFilterStore
+    await _blockFilterStore.init();
     if (verbose && _blockFilterStore.writeHead != null) {
       _log.info(
         'Loaded stored block filters up to height ${_blockFilterStore.writeHead}',
@@ -110,10 +113,10 @@ class ChainManager {
     };
   }
 
-  ChainEntry _initBestHeader(Network network) {
+  Future<ChainEntry> _initBestHeader(Network network) async {
     // check if the header file exists and is not empty
-    if (_blockHeaderStore.exists() && !_blockHeaderStore.empty()) {
-      final headers = _blockHeaderStore.read();
+    if (await _blockHeaderStore.exists() && !await _blockHeaderStore.empty()) {
+      final headers = await _blockHeaderStore.read();
       if (headers.isNotEmpty) {
         if (compareHashes(headers.first.hash(), _genesisBlockHeader.hash())) {
           ChainEntry? previous;
@@ -134,10 +137,13 @@ class ChainManager {
     return _makeChainEntry(_genesisBlockHeader, null);
   }
 
-  BlockFilterHeaderEntry _initBestBlockFilterHeaderHead(Network network) {
+  Future<BlockFilterHeaderEntry> _initBestBlockFilterHeaderHead(
+    Network network,
+  ) async {
     // check if the block filter headers file exists and is not empty
-    if (_blockFilterHeaderStore.exists() && !_blockFilterHeaderStore.empty()) {
-      final headers = _blockFilterHeaderStore.read();
+    if (await _blockFilterHeaderStore.exists() &&
+        !await _blockFilterHeaderStore.empty()) {
+      final headers = await _blockFilterHeaderStore.read();
       if (headers.isNotEmpty) {
         if (compareHashes(headers.first, _genesisBlockFilterHeader)) {
           BlockFilterHeaderEntry? previous;
@@ -158,7 +164,7 @@ class ChainManager {
     return _makeBlockFilterHeaderEntry(_genesisBlockFilterHeader, null);
   }
 
-  void _blockHeadersFileWrite() {
+  Future<void> _blockHeadersFileWrite() async {
     if (!_activeChain) {
       throw StateError(
         'Cannot write block headers to file in non-active chain',
@@ -173,33 +179,33 @@ class ChainManager {
         'First entry must be the genesis block when writing entire headers file',
       );
     }
-    _blockHeaderStore.write(chainEntries);
+    await _blockHeaderStore.write(chainEntries);
     // update the file chain head
     _fileChainHead = _bestChainHead;
   }
 
-  void _blockHeadersFileAppend(List<ChainEntry> chainEntries) {
+  Future<void> _blockHeadersFileAppend(List<ChainEntry> chainEntries) async {
     if (!_activeChain) {
       throw StateError(
         'Cannot write block headers to file in non-active chain',
       );
     }
-    _blockHeaderStore.append(chainEntries);
+    await _blockHeaderStore.append(chainEntries);
     // update the file chain head
     _fileChainHead = _bestChainHead;
   }
 
-  void _blockHeadersFileDelete() {
-    _blockHeaderStore.delete();
+  Future<void> _blockHeadersFileDelete() async {
+    await _blockHeaderStore.delete();
     // reset the file chain head
     _fileChainHead = null;
   }
 
-  void _blockHeadersFileWriteOrAppend() {
+  Future<void> _blockHeadersFileWriteOrAppend() async {
     // if no block headers have been read from the file yet,
     // write the entire headers file
     if (_fileChainHead == null) {
-      _blockHeadersFileWrite();
+      await _blockHeadersFileWrite();
     } else {
       // find the list of chain entries from the best chain head to the file chain head
       // this *should* not be empty because we are called after adding new headers
@@ -211,15 +217,15 @@ class ChainManager {
       // it means we have reorged past the file chain head
       // so we need to rewrite the entire headers file (should happen very infrequently)
       if (chainEntries.isEmpty || chainEntries.first.height == 0) {
-        _blockHeadersFileDelete();
-        _blockHeadersFileWrite();
+        await _blockHeadersFileDelete();
+        await _blockHeadersFileWrite();
       } else {
-        _blockHeadersFileAppend(chainEntries);
+        await _blockHeadersFileAppend(chainEntries);
       }
     }
   }
 
-  void _blockFilterHeadersFileWrite() {
+  Future<void> _blockFilterHeadersFileWrite() async {
     final entries = _filterEntryListFromHead(_bestBlockFilterHead, null);
     if (entries.isEmpty) {
       throw StateError('Cannot write block filter headers without entries');
@@ -229,28 +235,28 @@ class ChainManager {
         'First entry must be the genesis block when writing entire filter headers file',
       );
     }
-    _blockFilterHeaderStore.write(entries);
+    await _blockFilterHeaderStore.write(entries);
     // update the file chain head
     _fileBlockFilterHead = _bestBlockFilterHead;
   }
 
-  void _blockFilterHeadersFileAppend(List<BlockFilterHeaderEntry> entries) {
-    _blockFilterHeaderStore.append(entries);
+  Future<void> _blockFilterHeadersFileAppend(List<BlockFilterHeaderEntry> entries) async {
+    await _blockFilterHeaderStore.append(entries);
     // update the file chain head
     _fileBlockFilterHead = _bestBlockFilterHead;
   }
 
-  void _blockFilterHeadersFileDelete() {
-    _blockFilterHeaderStore.delete();
+  Future<void> _blockFilterHeadersFileDelete() async {
+    await _blockFilterHeaderStore.delete();
     // reset the file chain head
     _fileBlockFilterHead = null;
   }
 
-  void _blockFilterHeadersFileWriteOrAppend() {
+  Future<void> _blockFilterHeadersFileWriteOrAppend() async {
     // if no block headers have been read from the file yet,
     // write the entire headers file
     if (_fileBlockFilterHead == null) {
-      _blockFilterHeadersFileWrite();
+      await _blockFilterHeadersFileWrite();
     } else {
       // find the list of chain entries from the best chain head to the file chain head
       // this *should* not be empty because we are called after adding new headers
@@ -262,10 +268,10 @@ class ChainManager {
       // it means we have reorged past the file chain head
       // so we need to rewrite the entire headers file (should happen very infrequently)
       if (chainEntries.isEmpty || chainEntries.first.height == 0) {
-        _blockFilterHeadersFileDelete();
-        _blockFilterHeadersFileWrite();
+        await _blockFilterHeadersFileDelete();
+        await _blockFilterHeadersFileWrite();
       } else {
-        _blockFilterHeadersFileAppend(chainEntries);
+        await _blockFilterHeadersFileAppend(chainEntries);
       }
     }
   }
@@ -486,7 +492,7 @@ class ChainManager {
     return newChainHead.previous!.header.nBits;
   }
 
-  void _updateHeads(ChainEntry newChainHead) {
+  Future<void> _updateHeads(ChainEntry newChainHead) async {
     // 1) check if the new chainhead can replace one of the existing heads
     var replacedHead = false;
     for (final chainHead in _chainHeads) {
@@ -562,7 +568,7 @@ class ChainManager {
         newBestPrev = newBestPrev.previous!;
       }
       // 4a) now we have the point where the reorg starts, we can reset the block filter headers to this point
-      _resetBlockFilterHeaders(currentBestPrev);
+      await _resetBlockFilterHeaders(currentBestPrev);
     }
     // 5) update the best chain head
     _bestChainHead = newBest;
@@ -599,7 +605,7 @@ class ChainManager {
     }
   }
 
-  void _resetBlockFilterHeaders(ChainEntry reorgPoint) {
+  Future<void> _resetBlockFilterHeaders(ChainEntry reorgPoint) async {
     // reset the block filter headers to the point where the reorg starts
     BlockFilterHeaderEntry? current = _bestBlockFilterHead;
     while (current != null && current.height > reorgPoint.height) {
@@ -612,8 +618,8 @@ class ChainManager {
       throw StateError('No block filter headers found for reorg point');
     }
     _bestBlockFilterHead = current;
-    _blockFilterHeadersFileDelete();
-    _blockFilterHeadersFileWrite();
+    await _blockFilterHeadersFileDelete();
+    await _blockFilterHeadersFileWrite();
     _fileBlockFilterHead = _bestBlockFilterHead;
   }
 
@@ -667,7 +673,7 @@ class ChainManager {
     );
   }
 
-  AddBlockHeadersResult addBlockHeaders(List<BlockHeader> headers) {
+  Future<AddBlockHeadersResult> addBlockHeaders(List<BlockHeader> headers) async {
     if (headers.isEmpty) {
       return AddBlockHeadersResult.success;
     }
@@ -756,7 +762,7 @@ class ChainManager {
         return AddBlockHeadersResult.invalidBlockHeader; // abort adding headers
       }
       // update heads
-      _updateHeads(newChainHead);
+      await _updateHeads(newChainHead);
       // update number of headers added
       headersAdded += 1;
     }
@@ -776,7 +782,7 @@ class ChainManager {
         _bestChainHead.header.hash(),
         initialBest.header.hash(),
       )) {
-        _blockHeadersFileWriteOrAppend();
+        await _blockHeadersFileWriteOrAppend();
       }
     }
     // clean chainheads
@@ -784,11 +790,11 @@ class ChainManager {
     return AddBlockHeadersResult.success;
   }
 
-  AddBlockFilterHeadersResult addBlockFilterHeaders(
+  Future<AddBlockFilterHeadersResult> addBlockFilterHeaders(
     Uint8List previousFilterHash,
     List<Uint8List> filterHashes,
     Uint8List stopHash,
-  ) {
+  ) async {
     final initialBest = _bestBlockFilterHead;
     // check previous filter hash
     if (!compareHashes(_bestBlockFilterHead.header, previousFilterHash)) {
@@ -814,7 +820,7 @@ class ChainManager {
     }
     // write the headers to file
     if (!compareHashes(_bestBlockFilterHead.header, initialBest.header)) {
-      _blockFilterHeadersFileWriteOrAppend();
+      await _blockFilterHeadersFileWriteOrAppend();
     }
 
     _updateBlockFilterHeaderHeightIndex();
@@ -848,7 +854,7 @@ class ChainManager {
     return _blockFilterHeaderHeightIndex[height];
   }
 
-  void activate() {
+  Future<void> activate() async {
     if (_activeChain) {
       throw StateError('Cannot activate already activated chain');
     }
@@ -866,7 +872,7 @@ class ChainManager {
           _fileChainHead!.header.hash(),
           _bestChainHead.header.hash(),
         )) {
-      _blockHeadersFileWriteOrAppend();
+      await _blockHeadersFileWriteOrAppend();
     }
   }
 
@@ -899,9 +905,9 @@ class ChainManager {
   }
 
   /// Flush all buffered filters to disk in a single batch write.
-  void flushBlockFilters() {
+  Future<void> flushBlockFilters() async {
     try {
-      _blockFilterStore.flush();
+      await _blockFilterStore.flush();
       if (verbose) {
         _log.info(
           'Flushed block filters up to height ${_blockFilterStore.writeHead}',
@@ -914,12 +920,12 @@ class ChainManager {
 
   /// Replay stored filters from [fromHeight] upward, calling [callback] for each.
   /// Useful on startup to re-scan already-downloaded filters against wallet addresses.
-  void replayStoredFilters(
+  Future<void> replayStoredFilters(
     int fromHeight,
     void Function(int height, Uint8List blockHash, Uint8List filterBytes)
     callback,
-  ) {
-    final entries = _blockFilterStore.readFrom(fromHeight);
+  ) async {
+    final entries = await _blockFilterStore.readFrom(fromHeight);
     if (verbose) {
       _log.info(
         'Replaying ${entries.length} stored block filters from height $fromHeight',

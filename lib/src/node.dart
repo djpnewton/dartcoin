@@ -47,18 +47,19 @@ class Node {
     required ChainStore blockFiltersChainStore,
     required BlockStore blockStore,
   }) {
-    assert(
-      !(syncBlockFilterHeaders && !syncBlockHeaders),
-      'Cannot sync block filter headers without syncing block headers',
-    );
-    assert(
-      !(wallet != null &&
-          wallet!.addresses.isNotEmpty &&
-          !syncBlockFilterHeaders),
-      'Cannot scan addresses without syncing block filter headers',
-    );
+    if (syncBlockFilterHeaders && !syncBlockHeaders) {
+      throw ArgumentError(
+        'Cannot sync block filter headers without syncing block headers',
+      );
+    }
+    if (wallet != null &&
+        wallet!.addresses.isNotEmpty &&
+        !syncBlockFilterHeaders) {
+      throw ArgumentError(
+        'Cannot scan addresses without syncing block filter headers',
+      );
+    }
     _blockStore = blockStore;
-    // initialize the chain manager
     _chainManager = ChainManager(
       network: network,
       blockHeadersChainStore: blockHeadersChainStore,
@@ -69,12 +70,17 @@ class Node {
     );
   }
 
-  void _peerStatusChange(
+  Future<void> init() async {
+    await _blockStore.init();
+    await _chainManager.init();
+  }
+
+  Future<void> _peerStatusChange(
     Peer peer,
     PeerStatus status,
     PeerStatus prevStatus, {
     PeerStatusChangeReason? reason,
-  }) {
+  }) async {
     if (verbose) {
       _log.info(
         'Peer ${peer.ip}:${peer.port} status changed to $status${reason != null ? ' due to $reason' : ''}',
@@ -139,7 +145,7 @@ class Node {
           }
           // activate chain (and write to disk)
           if (!_chainManager.activeChain) {
-            _chainManager.activate();
+            await _chainManager.activate();
           }
           // start syncing block filters
           if (syncBlockFilterHeaders) {
@@ -163,10 +169,11 @@ class Node {
       case PeerStatus.blockFilterHeaderSynced:
         if (_chainManager.bestChainHead.height !=
             _chainManager.bestBlockFilterHead.height) {
-          _log.warning(
-            '_chainManager Block filter header height does not match block header height',
-          );
-          return;
+          // More block headers arrived during the sync; do another round.
+          if (syncBlockFilterHeaders) {
+            peer.syncBlockFilterHeaders(_chainManager);
+          }
+          break;
         }
         // start getting latest block
         _requestingBestBlockHash = _chainManager.bestChainHead.header.hash();
@@ -217,7 +224,7 @@ class Node {
 
           // 1) Replay already-stored filters so interestingBlockHashes is populated
           //    for blocks we downloaded on a previous run.
-          _chainManager.replayStoredFilters(_startBlock, (
+          await _chainManager.replayStoredFilters(_startBlock, (
             height,
             blockHash,
             filterBytes,
@@ -310,11 +317,11 @@ class Node {
     }
   }
 
-  void _peerBlockFilterReceived(
+  Future<void> _peerBlockFilterReceived(
     Peer peer,
     Uint8List blockHash,
     BasicBlockFilter filter,
-  ) {
+  ) async {
     if (verbose) {
       _log.info('Block filter received from peer ${peer.ip}:${peer.port}');
     }
@@ -328,7 +335,7 @@ class Node {
             'Reached target block filter hash: ${blockHash.reverse().toHex()}',
           );
         }
-        _chainManager.flushBlockFilters();
+        await _chainManager.flushBlockFilters();
         final startHeight = _requestingBlockFiltersCurrentTargetHeight + 1;
         final targetHeight =
             _chainManager.bestChainHead.height <
@@ -465,7 +472,7 @@ class Node {
 
   Future<bool> waitForBlockCount(
     int count, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final startTime = DateTime.now();
     while (DateTime.now().difference(startTime) < timeout) {
@@ -479,7 +486,7 @@ class Node {
 
   Future<bool> waitForBlockFilterHeaderCount(
     int count, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final startTime = DateTime.now();
     while (DateTime.now().difference(startTime) < timeout) {
@@ -495,7 +502,7 @@ class Node {
     String ip,
     int port,
     PeerStatus status, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final startTime = DateTime.now();
     while (DateTime.now().difference(startTime) < timeout) {
@@ -510,7 +517,7 @@ class Node {
 
   Future<bool> waitForHashInChainHeads(
     String hash, {
-    Duration timeout = const Duration(seconds: 30),
+    Duration timeout = const Duration(seconds: 10),
   }) async {
     final startTime = DateTime.now();
     while (DateTime.now().difference(startTime) < timeout) {

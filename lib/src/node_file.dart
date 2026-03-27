@@ -17,16 +17,16 @@ class NodeFileStorage extends Node {
     required super.txProvider,
   }) : dataDir = _resolveDataDir(network, dataDir),
        super(
-         blockHeadersChainStore: FileChainStore(
+         blockHeadersChainStore: ChainStoreFile(
            '${_resolveDataDir(network, dataDir)}/$_headers',
          ),
-         blockFilterHeadersChainStore: FileChainStore(
+         blockFilterHeadersChainStore: ChainStoreFile(
            '${_resolveDataDir(network, dataDir)}/$_filterHeaders',
          ),
-         blockFiltersChainStore: FileChainStore(
+         blockFiltersChainStore: ChainStoreFile(
            '${_resolveDataDir(network, dataDir)}/$_filters',
          ),
-         blockStore: FileBlockStore(
+         blockStore: BlockStoreFile(
            _resolveDataDir(network, dataDir),
            verbose: verbose,
          ),

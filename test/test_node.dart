@@ -54,6 +54,7 @@ void main() {
       dataDir: nodeDataDir,
       txProvider: RegtestTxProvider(proc1),
     );
+    await node.init();
   });
   tearDown(() async {
     // shutdown the node
@@ -169,6 +170,8 @@ void main() {
       20,
       timeout: const Duration(seconds: 5),
     );
+    expect(node.blockCount(), equals(20));
+    expect(node.blockFilterHeaderCount(), equals(20));
     // check the block filter header at height 20
     final hash20 = await proc1.rpc.getBlockHash(20);
     final blockFilter20 = await proc1.rpc.getBlockFilter(hash20);

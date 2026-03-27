@@ -574,6 +574,7 @@ class TestP2pCommand extends Command<void> {
             wallet: wallet,
             txProvider: BlockDnTxProvider(network),
           );
+    await node.init();
     node.add(peer: peer);
   }
 }

@@ -10,38 +10,39 @@ import 'utils.dart';
 final _log = ColorLogger('CS_File');
 
 /// [ChainStore] implementation backed by a single file on disk.
-class FileChainStore implements ChainStore {
+class ChainStoreFile implements ChainStore {
   final String filePath;
 
-  FileChainStore(this.filePath);
+  ChainStoreFile(this.filePath);
 
   @override
-  bool exists() => File(filePath).existsSync();
+  Future<bool> exists() async => await File(filePath).exists();
 
   @override
-  bool empty() => !exists() || File(filePath).lengthSync() == 0;
+  Future<bool> empty() async =>
+      !(await exists()) || await File(filePath).length() == 0;
 
   @override
-  void delete() {
-    if (exists()) File(filePath).deleteSync();
+  Future<void> delete() async {
+    if (await exists()) await File(filePath).delete();
   }
 
   @override
-  List<String> readLines() => File(filePath).readAsLinesSync();
+  Future<List<String>> readLines() async => await File(filePath).readAsLines();
 
   @override
-  void writeAll(String content) {
+  Future<void> writeAll(String content) async {
     final file = File(filePath);
-    if (file.existsSync()) {
+    if (await file.exists()) {
       throw StateError('Storage already exists: $filePath');
     }
-    file.createSync(recursive: true);
-    file.writeAsStringSync(content);
+    await file.create(recursive: true);
+    await file.writeAsString(content);
   }
 
   @override
-  void append(String content) =>
-      File(filePath).writeAsStringSync(content, mode: FileMode.append);
+  Future<void> append(String content) async =>
+      await File(filePath).writeAsString(content, mode: FileMode.append);
 }
 
 /// [BlockStore] implementation that persists blocks as individual `.bin` files
@@ -51,35 +52,44 @@ class FileChainStore implements ChainStore {
 ///   [dirPath]/blocks/[blockHash].bin   – raw serialised block bytes
 ///   [dirPath]/blocks/index.json        – dictionary of blockHash (hex) →
 ///                                        { filename, lastAccessed (ISO-8601) }
-class FileBlockStore implements BlockStore {
+class BlockStoreFile implements BlockStore {
   final String _blocksDir;
   final bool verbose;
   Map<String, _BlockIndexEntry> _index = {};
+  bool initialized = false;
 
-  FileBlockStore(String dirPath, {this.verbose = false})
-    : _blocksDir = '$dirPath/blocks' {
-    _loadIndex();
-  }
+  BlockStoreFile(String dirPath, {this.verbose = false})
+    : _blocksDir = '$dirPath/blocks';
 
   String get _indexPath => '$_blocksDir/index.json';
 
-  void _loadIndex() {
+  @override
+  Future<void> init() async {
     final file = File(_indexPath);
-    if (!file.existsSync()) {
+    if (!await file.exists()) {
       _index = {};
+      initialized = true;
       return;
     }
-    final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
     _index = json.map(
       (k, v) =>
           MapEntry(k, _BlockIndexEntry.fromJson(v as Map<String, dynamic>)),
     );
+    initialized = true;
   }
 
-  void _saveIndex() {
+  void _ensureInitialized() {
+    if (!initialized) {
+      throw StateError('BlockStoreFile not initialized. Call init() first.');
+    }
+  }
+
+  Future<void> _saveIndex() async {
+    _ensureInitialized();
     final file = File(_indexPath);
-    if (!file.existsSync()) file.createSync(recursive: true);
-    file.writeAsStringSync(
+    if (!await file.exists()) await file.create(recursive: true);
+    await file.writeAsString(
       const JsonEncoder.withIndent(
         '  ',
       ).convert(_index.map((k, v) => MapEntry(k, v.toJson()))),
@@ -87,34 +97,39 @@ class FileBlockStore implements BlockStore {
   }
 
   @override
-  bool contains(Uint8List blockHash) => _index.containsKey(blockHash.toHex());
+  Future<bool> contains(Uint8List blockHash) async {
+    _ensureInitialized();
+    return _index.containsKey(blockHash.toHex());
+  }
 
   @override
-  void store(Block block) {
+  Future<void> store(Block block) async {
+    _ensureInitialized();
     final hashHex = block.hash().toHex();
     if (_index.containsKey(hashHex)) return;
     final filename = '$hashHex.bin';
     final file = File('$_blocksDir/$filename');
-    if (!file.existsSync()) file.createSync(recursive: true);
-    file.writeAsBytesSync(block.toBytes());
+    if (!await file.exists()) await file.create(recursive: true);
+    await file.writeAsBytes(block.toBytes());
     _index[hashHex] = _BlockIndexEntry(
       filename: filename,
       lastAccessed: DateTime.now(),
     );
-    _saveIndex();
+    await _saveIndex();
     if (verbose) _log.info('Stored block $hashHex');
   }
 
   @override
-  Block? read(Uint8List blockHash) {
+  Future<Block?> read(Uint8List blockHash) async {
+    _ensureInitialized();
     final hashHex = blockHash.toHex();
     final entry = _index[hashHex];
     if (entry == null) return null;
     final file = File('$_blocksDir/${entry.filename}');
-    if (!file.existsSync()) return null;
-    final block = Block.fromBytes(Uint8List.fromList(file.readAsBytesSync()));
+    if (!await file.exists()) return null;
+    final block = Block.fromBytes(Uint8List.fromList(await file.readAsBytes()));
     entry.lastAccessed = DateTime.now();
-    _saveIndex();
+    await _saveIndex();
     return block;
   }
 }

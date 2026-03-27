@@ -181,6 +181,10 @@ class Peer {
   int? _serviceFlags;
   final _requestedBlocks = RequestedBlocks();
 
+  /// Serialises all async message handling so concurrent header batches can't
+  /// race on ChainManager / file-write state.
+  Future<void> _msgQueue = Future.value();
+
   PeerStatus get status => _status;
   int? get serviceFlags => _serviceFlags;
   bool get nodeCompactFiltersSupport =>
@@ -324,6 +328,7 @@ class Peer {
   }
 
   void connect() async {
+    _msgQueue = Future.value(); // reset queue for new connection
     final localPort = defaultPort(network);
     final localIp = '127.0.0.1';
 
@@ -381,7 +386,14 @@ class Peer {
                     network,
                   );
                   logMessage(message, msgHeader);
-                  handleMessage(message, socket);
+                  final msg = message;
+                  _msgQueue = _msgQueue
+                      .then((_) => handleMessage(msg, socket))
+                      .catchError((Object e) {
+                        _log.severe(
+                          'Error handling message from $ip:$port: $e',
+                        );
+                      });
                   // reset msgBuffer
                   msgBuffer = msgBuffer.sublist(
                     MessageHeader.messageHeaderSize +
@@ -533,7 +545,7 @@ class Peer {
     return _status.index >= status.index;
   }
 
-  void handleMessage(Message message, Socket socket) {
+  Future<void> handleMessage(Message message, Socket socket) async {
     if (message is MessageVersion) {
       // save peer data
       _serviceFlags = message.serviceFlags;
@@ -566,7 +578,7 @@ class Peer {
       // TODO: handle getdata message if we can?
     } else if (message is MessageBlock) {
       // Store every arriving block.
-      _blockStore?.store(message.block);
+      await _blockStore?.store(message.block);
       if (_onBlockReceived != null) {
         _onBlockReceived!(this, message.block);
       }
@@ -589,9 +601,9 @@ class Peer {
           _log.warning('ChainManager is not initialized, cannot process block');
           return;
         }
-        switch (_chainManager!.addBlockHeaders([message.block.header])) {
+        switch (await _chainManager!.addBlockHeaders([message.block.header])) {
           case AddBlockHeadersResult.success:
-            if (_status == PeerStatus.blockFilterHeaderSynced) {
+            if (_statusAtLeast(PeerStatus.blockFilterHeaderSynced)) {
               // we now need to resync to get the new block filter headers
               _doStatusChange(
                 PeerStatus.blockHeadersSynced,
@@ -636,7 +648,7 @@ class Peer {
       }
       final chainManager = _chainManager!;
       // add the headers to the blockHeaders list
-      switch (chainManager.addBlockHeaders(message.headers)) {
+      switch (await chainManager.addBlockHeaders(message.headers)) {
         case AddBlockHeadersResult.success:
           break; // headers added successfully
         case AddBlockHeadersResult.invalidBlockHeader:
@@ -694,7 +706,7 @@ class Peer {
         );
         return;
       }
-      switch (chainManager.addBlockFilterHeaders(
+      switch (await chainManager.addBlockFilterHeaders(
         message.previousFilterHeader,
         message.filterHashes,
         message.stopHash,
@@ -928,7 +940,10 @@ class Peer {
     socket.add(MessageGetAddr().toBytes(network));
   }
 
-  void requestBlocks(List<Uint8List> blockHashes, PeerStatus targetStatus) {
+  Future<void> requestBlocks(
+    List<Uint8List> blockHashes,
+    PeerStatus targetStatus,
+  ) async {
     assert(
       targetStatus == PeerStatus.blockFilterGetLatestBlock ||
           targetStatus == PeerStatus.getInterestingBlocks,
@@ -943,7 +958,7 @@ class Peer {
     // Serve any already-cached blocks immediately.
     final uncached = <Uint8List>[];
     for (final hash in blockHashes) {
-      final cached = _blockStore?.read(hash);
+      final cached = await _blockStore?.read(hash);
       if (cached != null) {
         if (verbose) {
           _log.info(
