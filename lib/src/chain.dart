@@ -73,6 +73,10 @@ class ChainManager {
        );
 
   Future<void> init() async {
+    // init chain stores
+    await _blockHeaderStore.init();
+    await _blockFilterHeaderStore.init();
+    await _blockFilterStore.init();
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
     final genesisFilter = BasicBlockFilter(
@@ -240,7 +244,9 @@ class ChainManager {
     _fileBlockFilterHead = _bestBlockFilterHead;
   }
 
-  Future<void> _blockFilterHeadersFileAppend(List<BlockFilterHeaderEntry> entries) async {
+  Future<void> _blockFilterHeadersFileAppend(
+    List<BlockFilterHeaderEntry> entries,
+  ) async {
     await _blockFilterHeaderStore.append(entries);
     // update the file chain head
     _fileBlockFilterHead = _bestBlockFilterHead;
@@ -673,7 +679,9 @@ class ChainManager {
     );
   }
 
-  Future<AddBlockHeadersResult> addBlockHeaders(List<BlockHeader> headers) async {
+  Future<AddBlockHeadersResult> addBlockHeaders(
+    List<BlockHeader> headers,
+  ) async {
     if (headers.isEmpty) {
       return AddBlockHeadersResult.success;
     }

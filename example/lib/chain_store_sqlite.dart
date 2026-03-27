@@ -29,6 +29,11 @@ class ChainStoreSqlite implements ChainStore {
   }
 
   @override
+  Future<void> init() async {
+    _ensureTable();
+  }
+
+  @override
   Future<bool> exists() async {
     final result = db.select(
       "SELECT name FROM sqlite_master WHERE type='table' AND name=?",

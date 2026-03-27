@@ -81,6 +81,7 @@ class BlockFilterEntry {
 /// Abstract backend used by [BlockHeaderStore], [BlockFilterHeaderStore] and
 /// [BlockFilterStore].  Implementations are not required to use the file system.
 abstract class ChainStore {
+  Future<void> init();
   Future<bool> exists();
   Future<bool> empty();
   Future<void> delete();
@@ -101,6 +102,7 @@ class BlockHeaderStore {
 
   BlockHeaderStore(this._backend, {this.verbose = false});
 
+  Future<void> init() => _backend.init();
   Future<bool> exists() => _backend.exists();
   Future<bool> empty() => _backend.empty();
   Future<void> delete() => _backend.delete();
@@ -178,6 +180,7 @@ class BlockFilterHeaderStore {
 
   BlockFilterHeaderStore(this._backend, {this.verbose = false});
 
+  Future<void> init() => _backend.init();
   Future<bool> exists() => _backend.exists();
   Future<bool> empty() => _backend.empty();
   Future<void> delete() => _backend.delete();
@@ -264,6 +267,7 @@ class BlockFilterStore {
 
   Future<void> init() async {
     if (_initialized) return;
+    await _backend.init();
     _writeHead = await _scanWriteHead();
     _initialized = true;
   }

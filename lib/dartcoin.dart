@@ -29,7 +29,6 @@ export 'src/siphash.dart';
 export 'src/block_filter.dart';
 export 'src/chain_store.dart';
 export 'src/node.dart';
-export 'src/node_file.dart';
 export 'src/p2p_messages.dart';
 export 'src/peer.dart';
 export 'src/peer_manager.dart';

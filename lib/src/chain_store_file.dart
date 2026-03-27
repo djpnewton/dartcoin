@@ -16,6 +16,9 @@ class ChainStoreFile implements ChainStore {
   ChainStoreFile(this.filePath);
 
   @override
+  Future<void> init() async {}
+
+  @override
   Future<bool> exists() async => await File(filePath).exists();
 
   @override

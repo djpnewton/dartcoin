@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:args/command_runner.dart';
 
 import 'package:dartcoin/dartcoin.dart';
+import 'package:dartcoin/file.dart';
 
 import 'node_sqlite.dart';
 
