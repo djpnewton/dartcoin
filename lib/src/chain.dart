@@ -59,11 +59,18 @@ class ChainManager {
     required String blockFiltersFilePath,
     required this.txProvider,
     this.verbose = false,
-  }) : _blockHeaderStore = BlockHeaderStore(blockHeadersFilePath),
-       _blockFilterHeaderStore = BlockFilterHeaderStore(
-         blockFilterHeadersFilePath,
+  }) : _blockHeaderStore = BlockHeaderStore(
+         FileChainStore(blockHeadersFilePath),
+         verbose: verbose,
        ),
-       _blockFilterStore = BlockFilterStore(blockFiltersFilePath) {
+       _blockFilterHeaderStore = BlockFilterHeaderStore(
+         FileChainStore(blockFilterHeadersFilePath),
+         verbose: verbose,
+       ),
+       _blockFilterStore = BlockFilterStore(
+         FileChainStore(blockFiltersFilePath),
+         verbose: verbose,
+       ) {
     // init genesis headers
     _genesisBlockHeader = Block.genesisBlock(network).header;
     final genesisFilter = BasicBlockFilter(

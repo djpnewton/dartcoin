@@ -20,7 +20,7 @@ class Node {
   final List<Peer> _peers = [];
   late final String _dataDir;
   late final ChainManager _chainManager;
-  late final FullBlockStore _blockStore;
+  late final BlockStore _blockStore;
   final bool verbose;
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
@@ -60,7 +60,7 @@ class Node {
     // initialize the data directory
     _dataDir = _initDataDir(network, dataDir: dataDir);
     // initialize the block store
-    _blockStore = FullBlockStore(_dataDir, verbose: verbose);
+    _blockStore = FileBlockStore(_dataDir, verbose: verbose);
     // initialize the chain manager
     _chainManager = ChainManager(
       network: network,

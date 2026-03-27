@@ -175,7 +175,7 @@ class Peer {
   Socket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
-  FullBlockStore? _blockStore;
+  BlockStore? _blockStore;
   Timer? _bfHeadersTimer;
   int _bfHeadersTimeoutCount = 0;
   int? _serviceFlags;
@@ -196,7 +196,7 @@ class Peer {
     required PeerBlockReceivedEvent? onBlockReceived,
     required PeerBlockFilterReceivedEvent? onBlockFilterReceived,
     required this.verbose,
-    FullBlockStore? blockStore,
+    BlockStore? blockStore,
   }) : _onStatusChange = onStatusChange,
        _onAddresses = onAddresses,
        _onBlockReceived = onBlockReceived,
@@ -223,7 +223,7 @@ class Peer {
     _onBlockFilterReceived = callback;
   }
 
-  void setBlockStoreCallback(FullBlockStore? blockStore) {
+  void setBlockStoreCallback(BlockStore? blockStore) {
     _blockStore = blockStore;
   }
 
