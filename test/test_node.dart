@@ -6,11 +6,11 @@ import 'package:test/test.dart';
 
 import '../lib/src/bitcoin_core/core_process.dart';
 import '../lib/src/block_filter.dart';
-import '../lib/src/node.dart';
+import '../lib/src/node_file.dart';
 import '../lib/src/peer.dart';
 import '../lib/src/common.dart';
 
-int _getTimestampOfGenesisInHeaderFile(Node node) {
+int _getTimestampOfGenesisInHeaderFile(NodeFileStorage node) {
   expect(File(node.blockHeadersFilePath).existsSync(), isTrue);
   final lines = File(node.blockHeadersFilePath).readAsLinesSync();
   for (final line in lines) {
@@ -31,7 +31,7 @@ void main() {
   late CoreProcess proc1;
   late CoreProcess proc2;
   late String nodeDataDir;
-  late Node node;
+  late NodeFileStorage node;
   setUp(() async {
     // start two regtest processes
     proc1 = CoreProcess(verbose: false, p2pPort: 18444, rpcPort: 18443);
@@ -49,7 +49,7 @@ void main() {
     }
     nodeDataDir = '${Directory.systemTemp.path}/dartcoin_node_$count';
     // initialize the node with the unique data directory
-    node = Node(
+    node = NodeFileStorage(
       network: Network.regtest,
       dataDir: nodeDataDir,
       txProvider: RegtestTxProvider(proc1),

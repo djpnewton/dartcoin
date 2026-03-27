@@ -128,7 +128,8 @@ elif [ "$BENCHMARKS" = "1" ]; then
   fi
 elif [ "$EXAMPLE" = "1" ]; then
   # run the example application, passing through any extra arguments
-  dart run $PROFILE_ARGS example/lib/main.dart "$@"
+  cd example
+  dart run $PROFILE_ARGS ./lib/main.dart "$@"
 else
   usage
 fi

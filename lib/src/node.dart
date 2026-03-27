@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
@@ -18,14 +17,12 @@ final _log = ColorLogger('Node');
 class Node {
   final Network network;
   final List<Peer> _peers = [];
-  late final String _dataDir;
   late final ChainManager _chainManager;
   late final BlockStore _blockStore;
   final bool verbose;
   final bool syncBlockHeaders;
   final bool syncBlockFilterHeaders;
   final Wallet? wallet;
-  final TxProvider txProvider;
   late final int? _startBlock = wallet?.birthdayBlock;
 
   int _requestingBestBlockNumber = 0;
@@ -40,12 +37,15 @@ class Node {
 
   Node({
     required this.network,
-    String? dataDir,
     this.verbose = false,
     this.syncBlockHeaders = true,
     this.syncBlockFilterHeaders = true,
     this.wallet,
-    required this.txProvider,
+    required TxProvider txProvider,
+    required ChainStore blockHeadersChainStore,
+    required ChainStore blockFilterHeadersChainStore,
+    required ChainStore blockFiltersChainStore,
+    required BlockStore blockStore,
   }) {
     assert(
       !(syncBlockFilterHeaders && !syncBlockHeaders),
@@ -57,51 +57,16 @@ class Node {
           !syncBlockFilterHeaders),
       'Cannot scan addresses without syncing block filter headers',
     );
-    // initialize the data directory
-    _dataDir = _initDataDir(network, dataDir: dataDir);
-    // initialize the block store
-    _blockStore = FileBlockStore(_dataDir, verbose: verbose);
+    _blockStore = blockStore;
     // initialize the chain manager
     _chainManager = ChainManager(
       network: network,
-      blockHeadersFilePath: blockHeadersFilePath,
-      blockFilterHeadersFilePath: blockFilterHeadersFilePath,
-      blockFiltersFilePath: blockFiltersFilePath,
+      blockHeadersChainStore: blockHeadersChainStore,
+      blockFilterHeadersChainStore: blockFilterHeadersChainStore,
+      blockFiltersChainStore: blockFiltersChainStore,
       txProvider: txProvider,
       verbose: verbose,
     );
-  }
-
-  String _initDataDir(Network network, {String? dataDir}) {
-    if (dataDir == null) {
-      final baseDir = '.';
-      final dirName = switch (network) {
-        Network.mainnet => '.dartcoin/mainnet',
-        Network.testnet => '.dartcoin/testnet',
-        Network.testnet4 => '.dartcoin/testnet4',
-        Network.regtest => '.dartcoin/regtest',
-      };
-      dataDir = '$baseDir/$dirName';
-    }
-    Directory(dataDir).createSync(recursive: true);
-    if (verbose) {
-      _log.info('Data directory initialized at: $dataDir');
-    }
-    return dataDir;
-  }
-
-  String get blocksDirPath => '$_dataDir/blocks';
-
-  String get blockHeadersFilePath {
-    return '$_dataDir/headers.csv';
-  }
-
-  String get blockFilterHeadersFilePath {
-    return '$_dataDir/filter_headers.csv';
-  }
-
-  String get blockFiltersFilePath {
-    return '$_dataDir/filters.csv';
   }
 
   void _peerStatusChange(

@@ -54,21 +54,21 @@ class ChainManager {
 
   ChainManager({
     required this.network,
-    required String blockHeadersFilePath,
-    required String blockFilterHeadersFilePath,
-    required String blockFiltersFilePath,
+    required ChainStore blockHeadersChainStore,
+    required ChainStore blockFilterHeadersChainStore,
+    required ChainStore blockFiltersChainStore,
     required this.txProvider,
     this.verbose = false,
   }) : _blockHeaderStore = BlockHeaderStore(
-         FileChainStore(blockHeadersFilePath),
+         blockHeadersChainStore,
          verbose: verbose,
        ),
        _blockFilterHeaderStore = BlockFilterHeaderStore(
-         FileChainStore(blockFilterHeadersFilePath),
+         blockFilterHeadersChainStore,
          verbose: verbose,
        ),
        _blockFilterStore = BlockFilterStore(
-         FileChainStore(blockFiltersFilePath),
+         blockFiltersChainStore,
          verbose: verbose,
        ) {
     // init genesis headers

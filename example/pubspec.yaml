@@ -10,3 +10,5 @@ dependencies:
   args: ^2.7.0
   dartcoin:
     path: ../
+  sqlite3: ^3.2.0
+

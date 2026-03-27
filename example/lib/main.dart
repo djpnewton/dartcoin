@@ -6,6 +6,8 @@ import 'package:args/command_runner.dart';
 
 import 'package:dartcoin/dartcoin.dart';
 
+import 'node_sqlite.dart';
+
 final _log = ColorLogger('main');
 
 class ProfileCommand extends Command<void> {
@@ -457,6 +459,11 @@ class TestP2pCommand extends Command<void> {
       abbr: 's',
       help: 'The starting block to use for scanning wallet addresses.',
     );
+    argParser.addOption(
+      'sqlite-filename',
+      abbr: 'd',
+      help: 'Optional filename for SQLite storage of chain data.',
+    );
   }
 
   @override
@@ -493,13 +500,15 @@ class TestP2pCommand extends Command<void> {
     int? birthdayBlock = birthdayBlockRaw != null
         ? int.tryParse(birthdayBlockRaw)
         : null;
+    final sqliteFilename = argResults?.option('sqlite-filename');
 
     _log.info(
       '\n'
       '    Sync Block Headers: $syncBlockHeaders\n'
       '    Sync Block Filter Headers: $syncBlockFilterHeaders\n'
       '    Wallet Addresses: $walletAddresses\n'
-      '    Birthday Block: $birthdayBlock',
+      '    Birthday Block: $birthdayBlock\n'
+      '    Sqlite Filename: ${sqliteFilename ?? "None"}',
       color: LogColor.brightBlue,
     );
 
@@ -540,20 +549,31 @@ class TestP2pCommand extends Command<void> {
       return;
     }
     _log.info('Found suitable peer: ${peer.ip}:${peer.port}');
-    final node = Node(
-      network: network,
-      verbose: true,
-      syncBlockFilterHeaders: syncBlockFilterHeaders,
-      syncBlockHeaders: syncBlockHeaders,
-      wallet: walletAddresses.isNotEmpty
-          ? Wallet(
-              addresses: walletAddresses,
-              birthdayBlock: birthdayBlock,
-              txProvider: BlockDnTxProvider(network),
-            )
-          : null,
-      txProvider: BlockDnTxProvider(network),
-    );
+    final wallet = walletAddresses.isNotEmpty
+        ? Wallet(
+            addresses: walletAddresses,
+            birthdayBlock: birthdayBlock!,
+            txProvider: BlockDnTxProvider(network),
+          )
+        : null;
+    final node = sqliteFilename != null
+        ? NodeSqliteStorage(
+            network: network,
+            dbFilename: sqliteFilename,
+            verbose: true,
+            syncBlockFilterHeaders: syncBlockFilterHeaders,
+            syncBlockHeaders: syncBlockHeaders,
+            wallet: wallet,
+            txProvider: BlockDnTxProvider(network),
+          )
+        : NodeFileStorage(
+            network: network,
+            verbose: true,
+            syncBlockFilterHeaders: syncBlockFilterHeaders,
+            syncBlockHeaders: syncBlockHeaders,
+            wallet: wallet,
+            txProvider: BlockDnTxProvider(network),
+          );
     node.add(peer: peer);
   }
 }
