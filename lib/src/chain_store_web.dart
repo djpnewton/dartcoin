@@ -169,6 +169,78 @@ class BlockStoreWeb implements BlockStore {
       tx.objectStore(_storeName).get(blockHash.toHex().toJS),
     );
     if (result == null) return null;
-    return Block.fromBytes((result as JSString).toDart.toBytes());
+    return Block.fromBytes(hexToBytes((result as JSString).toDart));
   }
 }
+
+/// [ChainStore] backed by its own IDB database, opened lazily in [init].
+///
+/// Both the database name and the single object-store name equal [_name],
+/// so each logical chain-store lives in its own isolated IDB database.
+class ChainStoreWebAuto implements ChainStore {
+  final String _name;
+  ChainStoreWeb? _inner;
+
+  ChainStoreWebAuto(this._name);
+
+  Future<ChainStoreWeb> _ensureInner() async {
+    if (_inner != null) return _inner!;
+    final db = await openDatabase(_name, objectStoreNames: [_name]);
+    _inner = ChainStoreWeb(db, _name);
+    return _inner!;
+  }
+
+  @override
+  Future<void> init() async => (await _ensureInner()).init();
+  @override
+  Future<bool> exists() async => (await _ensureInner()).exists();
+  @override
+  Future<bool> empty() async => (await _ensureInner()).empty();
+  @override
+  Future<void> delete() async => (await _ensureInner()).delete();
+  @override
+  Future<List<String>> readLines() async => (await _ensureInner()).readLines();
+  @override
+  Future<void> writeAll(String content) async =>
+      (await _ensureInner()).writeAll(content);
+  @override
+  Future<void> append(String content) async =>
+      (await _ensureInner()).append(content);
+}
+
+/// [BlockStore] backed by its own IDB database, opened lazily in [init].
+class BlockStoreWebAuto implements BlockStore {
+  final String _name;
+  BlockStoreWeb? _inner;
+
+  BlockStoreWebAuto(this._name);
+
+  Future<BlockStoreWeb> _ensureInner() async {
+    if (_inner != null) return _inner!;
+    final db = await openDatabase(_name, objectStoreNames: [_name]);
+    _inner = BlockStoreWeb(db, _name);
+    return _inner!;
+  }
+
+  @override
+  Future<void> init() async => (await _ensureInner()).init();
+  @override
+  Future<bool> contains(Uint8List blockHash) async =>
+      (await _ensureInner()).contains(blockHash);
+  @override
+  Future<void> store(Block block) async => (await _ensureInner()).store(block);
+  @override
+  Future<Block?> read(Uint8List blockHash) async =>
+      (await _ensureInner()).read(blockHash);
+}
+
+ChainStore _chainStoreWebFactory(String name) => ChainStoreWebAuto(name);
+
+BlockStore _blockStoreWebFactory(String name, {bool verbose = false}) =>
+    BlockStoreWebAuto(name);
+
+/// The IDB-backed [ChainStoreFactory] for web platforms.
+const ChainStoreFactory defaultChainStoreFactory = _chainStoreWebFactory;
+
+/// The IDB-backed [BlockStoreFactory] for web platforms.
+const BlockStoreFactory defaultBlockStoreFactory = _blockStoreWebFactory;

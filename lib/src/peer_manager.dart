@@ -23,7 +23,7 @@ class PeerManager {
   PeerManager({
     required this.network,
     this.verbose = false,
-    required this.socketFactory,
+    this.socketFactory = defaultSocketFactory,
   });
 
   static const int _maxAttempts = 5;

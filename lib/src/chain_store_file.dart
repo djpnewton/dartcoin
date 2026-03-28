@@ -154,3 +154,14 @@ class _BlockIndexEntry {
     'lastAccessed': lastAccessed.toIso8601String(),
   };
 }
+
+ChainStore _chainStoreFileFactory(String name) => ChainStoreFile(name);
+
+BlockStore _blockStoreFileFactory(String name, {bool verbose = false}) =>
+    BlockStoreFile(name, verbose: verbose);
+
+/// The file-backed [ChainStoreFactory] for native platforms.
+const ChainStoreFactory defaultChainStoreFactory = _chainStoreFileFactory;
+
+/// The file-backed [BlockStoreFactory] for native platforms.
+const BlockStoreFactory defaultBlockStoreFactory = _blockStoreFileFactory;

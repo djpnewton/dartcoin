@@ -1,6 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+export 'dc_socket_factory_stub.dart'
+    if (dart.library.io) 'dc_socket_io.dart'
+    if (dart.library.js_interop) 'dc_socket_web.dart'
+    show defaultSocketFactory;
+
 /// variables to hold the WebSocket bridge host and port, with a setter function
 var wsBridgeHost = 'localhost';
 var wsBridgePort = 3001;

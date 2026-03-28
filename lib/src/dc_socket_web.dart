@@ -104,3 +104,8 @@ class DcWebSocket implements DcSocket {
     if (!_sc.isClosed) _sc.close();
   }
 }
+
+/// The WebSocket-bridge [DcSocketFactory] for the browser.
+///
+/// Configure the bridge address with [setWebSocketBridgeHostPort] before use.
+const DcSocketFactory defaultSocketFactory = DcWebSocket.connect;

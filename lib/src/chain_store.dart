@@ -4,6 +4,11 @@ import 'logc.dart';
 import 'block.dart';
 import 'utils.dart';
 
+export 'chain_store_factory_stub.dart'
+    if (dart.library.io) 'chain_store_file.dart'
+    if (dart.library.js_interop) 'chain_store_web.dart'
+    show defaultChainStoreFactory, defaultBlockStoreFactory;
+
 final _log = ColorLogger('ChainStore');
 
 abstract class NodeLL<Self extends NodeLL<Self>> {
@@ -364,3 +369,11 @@ abstract class BlockStore {
   Future<void> store(Block block);
   Future<Block?> read(Uint8List blockHash);
 }
+
+/// Factory that creates a [ChainStore] for the given [name].
+/// On native platforms [name] is a file path; on web it is an IDB store name.
+typedef ChainStoreFactory = ChainStore Function(String name);
+
+/// Factory that creates a [BlockStore] for the given [name].
+/// On native platforms [name] is a directory path; on web it is an IDB store name.
+typedef BlockStoreFactory = BlockStore Function(String name, {bool verbose});

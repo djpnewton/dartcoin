@@ -56,3 +56,6 @@ class DcTcpSocket implements DcSocket {
     _socket.destroy();
   }
 }
+
+/// The raw TCP [DcSocketFactory] for native platforms (Linux / macOS / Windows / Android / iOS).
+const DcSocketFactory defaultSocketFactory = DcTcpSocket.connect;

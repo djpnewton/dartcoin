@@ -3,7 +3,6 @@ import 'dart:io';
 import 'common.dart';
 import 'node.dart';
 import 'chain_store_file.dart';
-import 'dc_socket_io.dart';
 
 class NodeNative extends Node {
   final String dataDir;
@@ -31,7 +30,6 @@ class NodeNative extends Node {
            _resolveDataDir(network, dataDir),
            verbose: verbose,
          ),
-         socketFactory: DcTcpSocket.connect,
        );
 
   static const _headers = 'headers.csv';

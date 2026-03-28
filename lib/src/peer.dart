@@ -202,7 +202,7 @@ class Peer {
     required PeerBlockFilterReceivedEvent? onBlockFilterReceived,
     required this.verbose,
     BlockStore? blockStore,
-    required DcSocketFactory socketFactory,
+    DcSocketFactory socketFactory = defaultSocketFactory,
   }) : _onStatusChange = onStatusChange,
        _onAddresses = onAddresses,
        _onBlockReceived = onBlockReceived,
@@ -250,7 +250,7 @@ class Peer {
     Network network, {
     bool verbose = false,
     int maxPerSeed = 3,
-    required DcSocketFactory socketFactory,
+    DcSocketFactory socketFactory = defaultSocketFactory,
   }) async {
     final seeds = switch (network) {
       Network.mainnet => [

@@ -1,4 +1,3 @@
-import 'package:dartcoin/native.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'package:dartcoin/dartcoin.dart';
@@ -52,6 +51,5 @@ class NodeSqliteStorage extends Node {
            '${network.name}_filters',
          ),
          blockStore: BlockStoreSqlite(db, '${network.name}_blocks'),
-         socketFactory: DcTcpSocket.connect,
        );
 }
