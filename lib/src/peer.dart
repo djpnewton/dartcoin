@@ -1,7 +1,7 @@
-import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'dc_socket.dart';
 import 'logc.dart';
 import 'p2p_messages.dart';
 import 'block.dart';
@@ -172,7 +172,7 @@ class Peer {
   PeerAddressesEvent? _onAddresses;
   PeerBlockReceivedEvent? _onBlockReceived;
   PeerBlockFilterReceivedEvent? _onBlockFilterReceived;
-  Socket? _socket;
+  DcSocket? _socket;
   PeerStatus _status = PeerStatus.connecting;
   ChainManager? _chainManager;
   BlockStore? _blockStore;
@@ -180,6 +180,7 @@ class Peer {
   int _bfHeadersTimeoutCount = 0;
   int? _serviceFlags;
   final _requestedBlocks = RequestedBlocks();
+  final DcSocketFactory _socketFactory;
 
   /// Serialises all async message handling so concurrent header batches can't
   /// race on ChainManager / file-write state.
@@ -201,11 +202,13 @@ class Peer {
     required PeerBlockFilterReceivedEvent? onBlockFilterReceived,
     required this.verbose,
     BlockStore? blockStore,
+    required DcSocketFactory socketFactory,
   }) : _onStatusChange = onStatusChange,
        _onAddresses = onAddresses,
        _onBlockReceived = onBlockReceived,
        _onBlockFilterReceived = onBlockFilterReceived,
-       _blockStore = blockStore;
+       _blockStore = blockStore,
+       _socketFactory = socketFactory;
 
   void setPeerStatusChangeCallback(PeerStatusEvent callback) {
     // set the callback for status changes
@@ -247,6 +250,7 @@ class Peer {
     Network network, {
     bool verbose = false,
     int maxPerSeed = 3,
+    required DcSocketFactory socketFactory,
   }) async {
     final seeds = switch (network) {
       Network.mainnet => [
@@ -277,14 +281,14 @@ class Peer {
     final results = await Future.wait(
       seeds.map((seed) async {
         try {
-          final addresses = await InternetAddress.lookup(
+          final addresses = await internetAddressLookupIPv4(
             seed,
-            type: InternetAddressType.IPv4,
+            socketFactory,
           );
           if (verbose) {
             _log.info('Found ${addresses.length} addresses for seed $seed');
           }
-          final ips = addresses.map((a) => a.address).toList()..shuffle();
+          final ips = addresses..shuffle();
           return ips.take(maxPerSeed).toList();
         } catch (e) {
           if (verbose) {
@@ -337,7 +341,7 @@ class Peer {
       _log.info('Connecting to peer: $ip:$port');
     }
     try {
-      _socket = await Socket.connect(
+      _socket = await _socketFactory(
         ip,
         port,
         timeout: const Duration(seconds: 5),
@@ -545,7 +549,7 @@ class Peer {
     return _status.index >= status.index;
   }
 
-  Future<void> handleMessage(Message message, Socket socket) async {
+  Future<void> handleMessage(Message message, DcSocket socket) async {
     if (message is MessageVersion) {
       // save peer data
       _serviceFlags = message.serviceFlags;
@@ -836,7 +840,7 @@ class Peer {
     );
   }
 
-  void _sendGetCfHeaders(Socket socket, ChainManager chainManager) {
+  void _sendGetCfHeaders(DcSocket socket, ChainManager chainManager) {
     final startHeight = chainManager.bestBlockFilterHead.height + 1;
     var endHeight = startHeight + 1999;
     endHeight = endHeight > chainManager.bestChainHead.height

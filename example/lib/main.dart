@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:args/command_runner.dart';
 
 import 'package:dartcoin/dartcoin.dart';
-import 'package:dartcoin/file.dart';
+import 'package:dartcoin/native.dart';
 
 import 'node_sqlite.dart';
 
@@ -534,7 +534,11 @@ class TestP2pCommand extends Command<void> {
       }
     }
 
-    final peerManager = PeerManager(network: network, verbose: true);
+    final peerManager = PeerManager(
+      network: network,
+      verbose: true,
+      socketFactory: DcTcpSocket.connect,
+    );
     Peer? peer;
     if (ip == null || port == null) {
       _log.info('Using dns seed to find peer.');
@@ -567,7 +571,7 @@ class TestP2pCommand extends Command<void> {
             wallet: wallet,
             txProvider: BlockDnTxProvider(network),
           )
-        : NodeFileStorage(
+        : NodeNative(
             network: network,
             verbose: true,
             syncBlockFilterHeaders: syncBlockFilterHeaders,

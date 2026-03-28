@@ -11,6 +11,7 @@ import 'block.dart';
 import 'peer.dart';
 import 'block_filter.dart';
 import 'wallet.dart';
+import 'dc_socket.dart';
 
 final _log = ColorLogger('Node');
 
@@ -24,6 +25,7 @@ class Node {
   final bool syncBlockFilterHeaders;
   final Wallet? wallet;
   late final int? _startBlock = wallet?.birthdayBlock;
+  final DcSocketFactory socketFactory;
 
   int _requestingBestBlockNumber = 0;
   Uint8List _requestingBestBlockHash = Uint8List(0);
@@ -46,6 +48,7 @@ class Node {
     required ChainStore blockFilterHeadersChainStore,
     required ChainStore blockFiltersChainStore,
     required BlockStore blockStore,
+    required this.socketFactory,
   }) {
     if (syncBlockFilterHeaders && !syncBlockHeaders) {
       throw ArgumentError(
@@ -388,6 +391,7 @@ class Node {
       onAddresses: null,
       verbose: verbose,
       blockStore: _blockStore,
+      socketFactory: socketFactory,
     );
     _peers.add(peer);
     peer.connect();

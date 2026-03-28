@@ -4,6 +4,7 @@ import 'logc.dart';
 import 'common.dart';
 import 'peer.dart';
 import 'p2p_messages.dart';
+import 'dc_socket.dart';
 
 final _log = ColorLogger('PeerManager');
 
@@ -17,8 +18,13 @@ class PeerCandidate {
 class PeerManager {
   final Network network;
   final bool verbose;
+  final DcSocketFactory socketFactory;
 
-  PeerManager({required this.network, this.verbose = false});
+  PeerManager({
+    required this.network,
+    this.verbose = false,
+    required this.socketFactory,
+  });
 
   static const int _maxAttempts = 5;
   int _count = 0;
@@ -43,6 +49,7 @@ class PeerManager {
       onBlockReceived: null,
       onBlockFilterReceived: null,
       verbose: verbose,
+      socketFactory: socketFactory,
     );
     peer.connect();
     final startTime = DateTime.now();
@@ -193,7 +200,11 @@ class PeerManager {
     }
     final List<String> seedIps;
     try {
-      seedIps = await Peer.ipsFromDnsSeeds(network, verbose: verbose);
+      seedIps = await Peer.ipsFromDnsSeeds(
+        network,
+        verbose: verbose,
+        socketFactory: socketFactory,
+      );
     } catch (e) {
       _log.warning('Failed to gather DNS seed candidates: $e');
       if (_count < _maxAttempts) return findPeer();

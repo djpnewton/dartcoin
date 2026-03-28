@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:dartcoin/dartcoin.dart';
-import 'package:dartcoin/file.dart';
+import 'package:dartcoin/native.dart';
 
 late BlockStoreFile bs;
 
