@@ -1,7 +1,7 @@
 include: package:lints/recommended.yaml
 
 analyzer:
-  exclude: [build/**]
+  exclude: [build/**, example_flutter/**]
   language:
     strict-casts: true
     strict-inference: true
