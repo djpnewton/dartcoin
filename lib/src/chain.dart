@@ -14,6 +14,7 @@ enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 enum AddBlockFilterHeadersResult {
   success,
   invalidBlockFilterHeader,
+
   /// The response's previousFilterHash matches an older entry in our filter
   /// header history, meaning this is a stale/duplicate response for an already-
   /// processed batch.  The caller should discard it silently.
@@ -48,6 +49,12 @@ class ChainManager {
   bool get activeChain => _activeChain;
   ChainEntry get bestChainHead => _bestChainHead;
   BlockFilterHeaderEntry get bestBlockFilterHead => _bestBlockFilterHead;
+  // ignore: avoid_setters_without_getters
+  /// FOR TESTING ONLY - directly replaces [_bestBlockFilterHead] so tests can
+  /// manufacture the race-condition state (height 0, non-genesis header) that
+  /// the repair path in [addBlockFilterHeaders] is designed to handle.
+  set bestBlockFilterHeadForTesting(BlockFilterHeaderEntry entry) =>
+      _bestBlockFilterHead = entry;
   List<ChainEntry> get chainHeads => _chainHeads;
   int? get maxStoredFilterHeight => _blockFilterStore.writeHead;
   List<Uint8List> get recentBlockHeadersHashes {
@@ -849,32 +856,58 @@ class ChainManager {
       // queued response that was sent *before* a recent reset (i.e. it belongs
       // to a pre-reset batch at some height > 0).  Treat it as stale so the
       // caller discards it and waits for the freshly-issued genesis request.
+      //
+      // Caveat: a race between an async resetBlockFilterHeaderChain() and a
+      // concurrent addBlockFilterHeaders() call (e.g. triggered by the retry
+      // timer firing during the IDB await inside the reset) can leave
+      // _bestBlockFilterHead.header pointing to a non-genesis value even when
+      // height is 0.  Guard against that by also checking previousFilterHash
+      // directly against _genesisBlockFilterHeader and, on a match, repairing
+      // _bestBlockFilterHead before falling through to process the batch.
       if (_bestBlockFilterHead.height == 0) {
+        if (!compareHashes(_genesisBlockFilterHeader, previousFilterHash)) {
+          // Genuinely stale: previousFilterHash is not the genesis filter header.
+          if (verbose) {
+            _log.info(
+              'Discarding pre-reset stale cfheaders response at genesis '
+              '(previousFilterHash does not match genesis: '
+              '${headerHashNice(previousFilterHash)})',
+            );
+          }
+          return AddBlockFilterHeadersResult.staleBlockFilterHeader;
+        }
+        // previousFilterHash IS the canonical genesis filter header.
+        // Repair any race-induced corruption in _bestBlockFilterHead and
+        // fall through to process the batch normally.
         if (verbose) {
           _log.info(
-            'Discarding pre-reset stale cfheaders response at genesis '
-            '(previousFilterHash does not match genesis: '
-            '${headerHashNice(previousFilterHash)})',
+            'Repairing genesis block filter head '
+            '(race condition: best header was ${headerHashNice(_bestBlockFilterHead.header)}, '
+            'expected ${headerHashNice(_genesisBlockFilterHeader)})',
           );
         }
-        return AddBlockFilterHeadersResult.staleBlockFilterHeader;
+        _bestBlockFilterHead = _makeBlockFilterHeaderEntry(
+          _genesisBlockFilterHeader,
+          null,
+        );
+      } else {
+        // Case 2 – height > 0.  If previousFilterHash is found anywhere in our
+        // stored filter-header height index the response is for an older batch
+        // we already processed (timer-induced duplicate).  Otherwise our stored
+        // data at the current height disagrees with the peer – a genuine mismatch.
+        final isStale = _blockFilterHeaderHeightIndex.values.any(
+          (h) => compareHashes(h, previousFilterHash),
+        );
+        if (isStale) {
+          return AddBlockFilterHeadersResult.staleBlockFilterHeader;
+        }
+        _log.warning(
+          'Received block filter header with invalid previous header: '
+          '${headerHashNice(_bestBlockFilterHead.header)} != '
+          '${headerHashNice(previousFilterHash)}',
+        );
+        return AddBlockFilterHeadersResult.invalidBlockFilterHeader;
       }
-      // Case 2 – height > 0.  If previousFilterHash is found anywhere in our
-      // stored filter-header height index the response is for an older batch
-      // we already processed (timer-induced duplicate).  Otherwise our stored
-      // data at the current height disagrees with the peer – a genuine mismatch.
-      final isStale = _blockFilterHeaderHeightIndex.values.any(
-        (h) => compareHashes(h, previousFilterHash),
-      );
-      if (isStale) {
-        return AddBlockFilterHeadersResult.staleBlockFilterHeader;
-      }
-      _log.warning(
-        'Received block filter header with invalid previous header: '
-        '${headerHashNice(_bestBlockFilterHead.header)} != '
-        '${headerHashNice(previousFilterHash)}',
-      );
-      return AddBlockFilterHeadersResult.invalidBlockFilterHeader;
     }
     for (final filterHash in filterHashes) {
       // create header

@@ -16,4 +16,3 @@ Future<DcSocket> _unsupportedSocketFactory(
 /// Placeholder [DcSocketFactory] used on platforms where neither `dart:io`
 /// nor `dart:js_interop` is available. Always throws [UnsupportedError].
 const DcSocketFactory defaultSocketFactory = _unsupportedSocketFactory;
-
