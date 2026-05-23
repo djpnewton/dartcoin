@@ -26,7 +26,7 @@ class DcWebSocket implements DcSocket {
   static Future<DcSocket> connect(String ip, int port, {Duration? timeout}) {
     final sc = StreamController<Uint8List>.broadcast();
     final url =
-        'ws://$wsBridgeHost:$wsBridgePort/v1/${ip.replaceAll('.', '_')}/$port';
+        '$wsBridgeProtocol://$wsBridgeHost:$wsBridgePort/v1/${ip.replaceAll('.', '_')}/$port';
     final ws = WebSocket(url);
     ws.binaryType = 'arraybuffer';
 

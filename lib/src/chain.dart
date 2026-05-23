@@ -11,7 +11,14 @@ final _log = ColorLogger('Chain');
 
 enum AddBlockHeadersResult { success, invalidBlockHeader, noChainHead }
 
-enum AddBlockFilterHeadersResult { success, invalidBlockFilterHeader }
+enum AddBlockFilterHeadersResult {
+  success,
+  invalidBlockFilterHeader,
+  /// The response's previousFilterHash matches an older entry in our filter
+  /// header history, meaning this is a stale/duplicate response for an already-
+  /// processed batch.  The caller should discard it silently.
+  staleBlockFilterHeader,
+}
 
 class ChainManager {
   static const int difficultyAdjustmentInterval = 2016;
@@ -125,9 +132,11 @@ class ChainManager {
         if (compareHashes(headers.first.hash(), _genesisBlockHeader.hash())) {
           ChainEntry? previous;
           ChainEntry? chainHead;
+          var yi = 0;
           for (final header in headers) {
             chainHead = _makeChainEntry(header, previous);
             previous = chainHead;
+            if (++yi % 500 == 0) await Future<void>.delayed(Duration.zero);
           }
           _fileChainHead = chainHead;
           return chainHead!;
@@ -152,9 +161,11 @@ class ChainManager {
         if (compareHashes(headers.first, _genesisBlockFilterHeader)) {
           BlockFilterHeaderEntry? previous;
           BlockFilterHeaderEntry? head;
+          var yi = 0;
           for (final header in headers) {
             head = _makeBlockFilterHeaderEntry(header, previous);
             previous = head;
+            if (++yi % 500 == 0) await Future<void>.delayed(Duration.zero);
           }
           _fileBlockFilterHead = head;
           return head!;
@@ -183,9 +194,10 @@ class ChainManager {
         'First entry must be the genesis block when writing entire headers file',
       );
     }
-    await _blockHeaderStore.write(chainEntries);
-    // update the file chain head
+    // Update before the async write so concurrent callers take the append
+    // path rather than a second conflicting writeAll.
     _fileChainHead = _bestChainHead;
+    await _blockHeaderStore.write(chainEntries);
   }
 
   Future<void> _blockHeadersFileAppend(List<ChainEntry> chainEntries) async {
@@ -194,9 +206,10 @@ class ChainManager {
         'Cannot write block headers to file in non-active chain',
       );
     }
-    await _blockHeaderStore.append(chainEntries);
-    // update the file chain head
+    // Update before the async write so concurrent callers see the updated
+    // head and take the append path rather than a conflicting write path.
     _fileChainHead = _bestChainHead;
+    await _blockHeaderStore.append(chainEntries);
   }
 
   Future<void> _blockHeadersFileDelete() async {
@@ -239,17 +252,22 @@ class ChainManager {
         'First entry must be the genesis block when writing entire filter headers file',
       );
     }
-    await _blockFilterHeaderStore.write(entries);
-    // update the file chain head
+    // Update the file chain head *before* the async write so that any
+    // concurrent call (e.g. triggered by a retransmit timer firing during
+    // the IDB await) sees a non-null _fileBlockFilterHead and takes the
+    // append path instead of trying a second conflicting writeAll.
     _fileBlockFilterHead = _bestBlockFilterHead;
+    await _blockFilterHeaderStore.write(entries);
   }
 
   Future<void> _blockFilterHeadersFileAppend(
     List<BlockFilterHeaderEntry> entries,
   ) async {
-    await _blockFilterHeaderStore.append(entries);
-    // update the file chain head
+    // Update before the async write for the same reason as in
+    // _blockFilterHeadersFileWrite: prevent concurrent callers from
+    // re-entering the write path while this append is in flight.
     _fileBlockFilterHead = _bestBlockFilterHead;
+    await _blockFilterHeaderStore.append(entries);
   }
 
   Future<void> _blockFilterHeadersFileDelete() async {
@@ -626,7 +644,25 @@ class ChainManager {
     _bestBlockFilterHead = current;
     await _blockFilterHeadersFileDelete();
     await _blockFilterHeadersFileWrite();
-    _fileBlockFilterHead = _bestBlockFilterHead;
+    // _fileBlockFilterHead is already updated inside _blockFilterHeadersFileWrite.
+  }
+
+  /// Reset the filter-header chain back to the genesis entry and delete any
+  /// persisted filter-header data.  Called when a peer's response reveals that
+  /// our stored filter headers are inconsistent (e.g. left over from a buggy
+  /// previous session).
+  Future<void> resetBlockFilterHeaderChain() async {
+    _log.warning('Resetting block filter header chain to genesis');
+    _bestBlockFilterHead = _makeBlockFilterHeaderEntry(
+      _genesisBlockFilterHeader,
+      null,
+    );
+    _fileBlockFilterHead = null;
+    _blockFilterHeaderHeightIndex.clear();
+    _updateBlockFilterHeaderHeightIndex();
+    if (await _blockFilterHeaderStore.exists()) {
+      await _blockFilterHeadersFileDelete();
+    }
   }
 
   List<ChainEntry> _chainEntryListFromHead(
@@ -806,11 +842,39 @@ class ChainManager {
     final initialBest = _bestBlockFilterHead;
     // check previous filter hash
     if (!compareHashes(_bestBlockFilterHead.header, previousFilterHash)) {
-      _log.warning(
-        'Received block filter header with invalid previous header: ${headerHashNice(_bestBlockFilterHead.header)} != ${headerHashNice(previousFilterHash)}',
+      // Distinguish stale duplicate responses from genuine data mismatches.
+      //
+      // Case 1 – we are at genesis (height 0).  The only valid previousFilterHash
+      // is the genesis filter header itself.  Any other value must come from a
+      // queued response that was sent *before* a recent reset (i.e. it belongs
+      // to a pre-reset batch at some height > 0).  Treat it as stale so the
+      // caller discards it and waits for the freshly-issued genesis request.
+      if (_bestBlockFilterHead.height == 0) {
+        if (verbose) {
+          _log.info(
+            'Discarding pre-reset stale cfheaders response at genesis '
+            '(previousFilterHash does not match genesis: '
+            '${headerHashNice(previousFilterHash)})',
+          );
+        }
+        return AddBlockFilterHeadersResult.staleBlockFilterHeader;
+      }
+      // Case 2 – height > 0.  If previousFilterHash is found anywhere in our
+      // stored filter-header height index the response is for an older batch
+      // we already processed (timer-induced duplicate).  Otherwise our stored
+      // data at the current height disagrees with the peer – a genuine mismatch.
+      final isStale = _blockFilterHeaderHeightIndex.values.any(
+        (h) => compareHashes(h, previousFilterHash),
       );
-      return AddBlockFilterHeadersResult
-          .invalidBlockFilterHeader; // abort adding block filter headers
+      if (isStale) {
+        return AddBlockFilterHeadersResult.staleBlockFilterHeader;
+      }
+      _log.warning(
+        'Received block filter header with invalid previous header: '
+        '${headerHashNice(_bestBlockFilterHead.header)} != '
+        '${headerHashNice(previousFilterHash)}',
+      );
+      return AddBlockFilterHeadersResult.invalidBlockFilterHeader;
     }
     for (final filterHash in filterHashes) {
       // create header

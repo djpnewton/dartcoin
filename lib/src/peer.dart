@@ -691,7 +691,11 @@ class Peer {
         );
       }
     } else if (message is MessageCfHeaders) {
-      _clearBfHeadersTimer();
+      // Do NOT clear the timer yet – we only cancel it if the message turns
+      // out to be valid (i.e. its previousFilterHeader matches our current
+      // best).  Stale duplicate responses (caused by the 1-second retry
+      // timer firing before the original response arrived) must not cancel
+      // the live timer that is protecting the real in-flight request.
       if (_status != PeerStatus.blockFilterHeaderSyncing) {
         _log.warning('Received block filter headers when not syncing');
         return;
@@ -710,18 +714,38 @@ class Peer {
         );
         return;
       }
-      switch (await chainManager.addBlockFilterHeaders(
+      final result = await chainManager.addBlockFilterHeaders(
         message.previousFilterHeader,
         message.filterHashes,
         message.stopHash,
-      )) {
+      );
+      switch (result) {
         case AddBlockFilterHeadersResult.success:
+          // This response is valid – cancel the retry timer now.
+          _clearBfHeadersTimer();
           break;
+        case AddBlockFilterHeadersResult.staleBlockFilterHeader:
+          // previousFilterHash matched an older entry in our history: this is
+          // a stale/duplicate response for a batch we already processed.
+          // Do NOT cancel the live retry timer; just discard silently.
+          if (verbose) {
+            _log.info(
+              'Discarding stale cfheaders response '
+              '(previousFilterHash matches old history entry)',
+            );
+          }
+          return;
         case AddBlockFilterHeadersResult.invalidBlockFilterHeader:
+          // Genuine mismatch: previousFilterHash doesn't match anything in our
+          // filter-header history.  Our stored data is likely corrupted from a
+          // previous session.  Reset to genesis and re-request.
           _log.warning(
-            'Failed to add invalid filter headers: ${message.filterHashes.length}',
+            'Filter header chain mismatch – resetting to genesis and resyncing',
           );
-          break;
+          await chainManager.resetBlockFilterHeaderChain();
+          _clearBfHeadersTimer(); // cancel orphaned timer and reset timeout count
+          _sendGetCfHeaders(socket, chainManager);
+          return;
       }
       if (compareHashes(
         message.stopHash,

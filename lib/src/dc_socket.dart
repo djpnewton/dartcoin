@@ -7,9 +7,11 @@ export 'dc_socket_factory_stub.dart'
     show defaultSocketFactory;
 
 /// variables to hold the WebSocket bridge host and port, with a setter function
+var wsBridgeProtocol = 'ws';
 var wsBridgeHost = 'localhost';
 var wsBridgePort = 3001;
-void setWebSocketBridgeHostPort(String host, int port) {
+void setWebSocketBridgeHostPort(String protocol, String host, int port) {
+  wsBridgeProtocol = protocol;
   wsBridgeHost = host;
   wsBridgePort = port;
 }

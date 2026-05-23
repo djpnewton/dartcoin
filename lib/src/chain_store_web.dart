@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:typed_data';
 
@@ -18,15 +17,31 @@ Future<JSAny?> _requestFuture(IDBRequest req) {
   return c.future;
 }
 
+/// Completes when [tx] fires `complete`, or errors on `error`/`abort`.
+Future<void> _txComplete(IDBTransaction tx) {
+  final c = Completer<void>();
+  tx.oncomplete = ((JSObject _) => c.complete()).toJS;
+  tx.onerror = ((JSObject _) => c.completeError(
+    tx.error?.message ?? 'IDB transaction error',
+  )).toJS;
+  tx.onabort = ((JSObject _) => c.completeError(
+    'IDB transaction aborted',
+  )).toJS;
+  return c.future;
+}
+
 bool _storeExists(IDBDatabase db, String name) =>
     db.objectStoreNames.contains(name);
 
 /// Apparently you can only create object stores in the onupgradeneeded event,
-/// so this function checks if the store exists and creates it if not
+/// so this function checks if the store exists and creates it if not.
+/// When [rebuildStoresOnUpgrade] is true every listed store is deleted and
+/// re-created during an upgrade, which is used to migrate incompatible data.
 Future<IDBDatabase> openDatabase(
   String dbName, {
   int version = 1,
   List<String> objectStoreNames = const [],
+  bool rebuildStoresOnUpgrade = false,
 }) async {
   final c = Completer<IDBDatabase>();
   final req = window.indexedDB.open(dbName, version);
@@ -40,9 +55,14 @@ Future<IDBDatabase> openDatabase(
   req.onupgradeneeded = ((IDBVersionChangeEvent event) {
     final db = (event.target as IDBOpenDBRequest).result as IDBDatabase;
     for (final storeName in objectStoreNames) {
-      if (!_storeExists(db, storeName)) {
-        db.createObjectStore(storeName);
+      if (_storeExists(db, storeName)) {
+        if (rebuildStoresOnUpgrade) {
+          db.deleteObjectStore(storeName);
+        } else {
+          continue;
+        }
       }
+      db.createObjectStore(storeName);
     }
   }).toJS;
   return c.future;
@@ -50,11 +70,15 @@ Future<IDBDatabase> openDatabase(
 
 /// [ChainStore] backed by an IndexedDB object store.
 ///
-/// The backing object store holds a single record:
-///   key = `"rows"`, value = JSON-encoded `List<String>`.
+/// Each CSV row is stored as a separate record, keyed by its 0-based row
+/// index (an integer).  Row 0 is always the CSV header line; data rows start
+/// at index 1.  This avoids the "read-the-whole-file-then-rewrite-it" cost of
+/// the previous single-blob design: `append` only needs `count()` (O(1)) plus
+/// individual `put` calls in a single transaction, and `readLines` uses
+/// `getAll()` which IDB returns in key order.
 ///
 /// Multiple [ChainStoreWeb] instances can share the same [IDBDatabase] by
-/// using different [storeName] values
+/// using different [storeName] values.
 class ChainStoreWeb implements ChainStore {
   final IDBDatabase _db;
 
@@ -63,21 +87,25 @@ class ChainStoreWeb implements ChainStore {
 
   ChainStoreWeb(this._db, this.storeName);
 
-  Future<List<String>?> _readRaw() async {
+  Future<int> _rowCount() async {
     final tx = _db.transaction(storeName.toJS, 'readonly');
-    final result = await _requestFuture(
-      tx.objectStore(storeName).get('rows'.toJS),
-    );
-    if (result == null) return null;
-    return List<String>.from(jsonDecode((result as JSString).toDart) as List);
+    final result = await _requestFuture(tx.objectStore(storeName).count());
+    return (result as JSNumber).toDartDouble.toInt();
   }
 
-  Future<void> _writeRaw(List<String> lines) async {
+  /// Writes [lines] into a single readwrite transaction starting at [startKey].
+  Future<void> _putLines(List<String> lines, {required int startKey}) async {
+    if (lines.isEmpty) return;
     final tx = _db.transaction(storeName.toJS, 'readwrite');
-    await _requestFuture(
-      tx.objectStore(storeName).put(jsonEncode(lines).toJS, 'rows'.toJS),
-    );
+    final store = tx.objectStore(storeName);
+    for (var i = 0; i < lines.length; i++) {
+      store.put(lines[i].toJS, (startKey + i).toJS);
+    }
+    await _txComplete(tx);
   }
+
+  static List<String> _splitLines(String content) =>
+      content.split('\n').where((l) => l.isNotEmpty).toList();
 
   @override
   Future<void> init() async {
@@ -87,40 +115,40 @@ class ChainStoreWeb implements ChainStore {
   }
 
   @override
-  Future<bool> exists() async => await _readRaw() != null;
+  Future<bool> exists() async => await _rowCount() > 0;
 
   @override
-  Future<bool> empty() async {
-    final lines = await _readRaw();
-    return lines == null || lines.isEmpty;
-  }
+  Future<bool> empty() async => await _rowCount() == 0;
 
   @override
   Future<void> delete() async {
     final tx = _db.transaction(storeName.toJS, 'readwrite');
-    await _requestFuture(tx.objectStore(storeName).delete('rows'.toJS));
+    await _requestFuture(tx.objectStore(storeName).clear());
   }
 
   @override
-  Future<List<String>> readLines() async => await _readRaw() ?? [];
+  Future<List<String>> readLines() async {
+    final tx = _db.transaction(storeName.toJS, 'readonly');
+    final result = await _requestFuture(tx.objectStore(storeName).getAll());
+    if (result == null) return [];
+    return [for (final s in (result as JSArray<JSString>).toDart) s.toDart];
+  }
 
   @override
   Future<void> writeAll(String content) async {
     if (await exists()) {
       throw StateError('ChainStoreWeb "$storeName" already contains data');
     }
-    await _writeRaw(_splitLines(content));
+    await _putLines(_splitLines(content), startKey: 0);
   }
 
   @override
   Future<void> append(String content) async {
-    final lines = await _readRaw() ?? [];
-    lines.addAll(_splitLines(content));
-    await _writeRaw(lines);
+    final lines = _splitLines(content);
+    if (lines.isEmpty) return;
+    final startKey = await _rowCount();
+    await _putLines(lines, startKey: startKey);
   }
-
-  static List<String> _splitLines(String content) =>
-      content.split('\n').where((l) => l.isNotEmpty).toList();
 }
 
 /// [BlockStore] backed by an IndexedDB object store.
@@ -185,7 +213,14 @@ class ChainStoreWebAuto implements ChainStore {
 
   Future<ChainStoreWeb> _ensureInner() async {
     if (_inner != null) return _inner!;
-    final db = await openDatabase(_name, objectStoreNames: [_name]);
+    // Version 2 = per-row integer keys (version 1 used a single JSON blob).
+    // rebuildStoresOnUpgrade wipes any v1 data on the first open after upgrade.
+    final db = await openDatabase(
+      _name,
+      version: 2,
+      objectStoreNames: [_name],
+      rebuildStoresOnUpgrade: true,
+    );
     _inner = ChainStoreWeb(db, _name);
     return _inner!;
   }

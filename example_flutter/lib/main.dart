@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:dartcoin/dartcoin.dart';
@@ -12,6 +14,7 @@ void main() {
   // Set the WebSocket bridge host and port for the web socket backend. from
   // environment variables
   setWebSocketBridgeHostPort(
+    const String.fromEnvironment('WS_BRIDGE_PROTOCOL', defaultValue: 'ws'),
     const String.fromEnvironment('WS_BRIDGE_HOST', defaultValue: 'localhost'),
     int.parse(
       const String.fromEnvironment('WS_BRIDGE_PORT', defaultValue: '3001'),
@@ -43,7 +46,7 @@ class _AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -52,11 +55,12 @@ class _AppShell extends StatelessWidget {
             tabs: [
               Tab(icon: Icon(Icons.storage), text: 'Block Storage'),
               Tab(icon: Icon(Icons.wifi_find), text: 'Peer Finder'),
+              Tab(icon: Icon(Icons.account_tree), text: 'Light Node'),
             ],
           ),
         ),
         body: const TabBarView(
-          children: [BlockStorageDemoPage(), PeerFinderPage()],
+          children: [BlockStorageDemoPage(), PeerFinderPage(), LightNodePage()],
         ),
       ),
     );
@@ -620,6 +624,501 @@ class _PeerInfoCard extends StatelessWidget {
             const SizedBox(height: 12),
             for (final (label, value) in rows)
               _DetailRow(label: label, value: value),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _NodeRunState {
+  idle,
+  initializing,
+  discovering,
+  connecting,
+  syncing,
+  stopped,
+  error,
+}
+
+class LightNodePage extends StatefulWidget {
+  const LightNodePage({super.key});
+
+  @override
+  State<LightNodePage> createState() => _LightNodePageState();
+}
+
+class _LightNodePageState extends State<LightNodePage> {
+  _NodeRunState _state = _NodeRunState.idle;
+  Network _network = Network.testnet4;
+  Node? _node;
+  Timer? _pollTimer;
+  bool _stopping = false;
+  final ScrollController _logScrollController = ScrollController();
+  final List<String> _log = [];
+
+  /// Log records buffered by the global log handler; flushed on each poll tick
+  /// so we never call setState from within the node's processing.
+  final List<String> _pendingLogs = [];
+
+  // polled stats
+  int _headerHeight = 0;
+  int _filterHeaderHeight = 0;
+  String _bestHash = '';
+  String _connectedPeer = '';
+
+  /// Logger modules whose INFO messages are forwarded to the UI log.
+  static const _uiModules = {'Node', 'Peer', 'PeerManager'};
+
+  bool get _canStart =>
+      _state == _NodeRunState.idle ||
+      _state == _NodeRunState.stopped ||
+      _state == _NodeRunState.error;
+
+  void _installLogCapture() {
+    initCustomLogger((record) {
+      // Keep full console output.
+      final lvl = record.level.name.toUpperCase().padRight(7);
+      final t = record.time;
+      final ts =
+          '${t.year}${t.month.toString().padLeft(2, '0')}${t.day.toString().padLeft(2, '0')} '
+          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
+      // ignore: avoid_print
+      print('$lvl: $ts: ${record.loggerName} : ${record.message}');
+
+      // Buffer for UI: selected modules at INFO+, or any WARNING/SEVERE.
+      final forUi =
+          _uiModules.contains(record.loggerName) ||
+          record.level >= LogLevel.warning;
+      if (!forUi) return;
+      final now = record.time;
+      final uts =
+          '${now.hour.toString().padLeft(2, '0')}:'
+          '${now.minute.toString().padLeft(2, '0')}:'
+          '${now.second.toString().padLeft(2, '0')}';
+      _pendingLogs.add('[$uts][${record.loggerName}] ${record.message}');
+    });
+  }
+
+  void _uninstallLogCapture() => initConsoleLogger();
+
+  void _addLog(String msg) {
+    final now = DateTime.now();
+    final ts =
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}:'
+        '${now.second.toString().padLeft(2, '0')}';
+    setState(() => _log.add('[$ts] $msg'));
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _node?.shutdown();
+    _uninstallLogCapture();
+    _logScrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _start() async {
+    setState(() {
+      _state = _NodeRunState.initializing;
+      _log.clear();
+      _pendingLogs.clear();
+      _headerHeight = 0;
+      _filterHeaderHeight = 0;
+      _bestHash = '';
+      _connectedPeer = '';
+    });
+
+    _stopping = false;
+    _installLogCapture();
+
+    try {
+      // 1. Create + initialise node
+      _addLog('Creating node (${_network.name})…');
+      _node = defaultNodeFactory(
+        network: _network,
+        txProvider: BlockDnTxProvider(_network),
+        syncBlockFilterHeaders: true,
+        verbose: true,
+      );
+      await _node!.init();
+      if (_stopping || !mounted) return;
+      _addLog('Node initialised');
+
+      // 2. Discover + connect to a peer that supports compact block filters
+      setState(() => _state = _NodeRunState.discovering);
+      _addLog('Searching for peer with compact filter support…');
+      final manager = PeerManager(network: _network, verbose: true);
+      final peer = await manager.findPeer();
+      if (_stopping || !mounted) return;
+
+      if (peer == null) {
+        setState(() => _state = _NodeRunState.error);
+        _addLog('Could not find a peer with compact filter support');
+        return;
+      }
+
+      setState(() {
+        _state = _NodeRunState.connecting;
+        _connectedPeer = '${peer.ip}:${peer.port}';
+      });
+      _addLog('Found peer ✓  ${peer.ip}:${peer.port}');
+
+      // Hand the already-handshaked peer to the node to start syncing.
+      _node!.add(peer: peer);
+
+      // 3. Syncing — fast poll flushes logs + updates stats
+      setState(() => _state = _NodeRunState.syncing);
+      _addLog('Syncing…');
+      _pollTimer = Timer.periodic(
+        const Duration(milliseconds: 300),
+        (_) => _poll(),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _state = _NodeRunState.error);
+        _addLog('Error: $e');
+      }
+    }
+  }
+
+  void _poll() {
+    if (!mounted || _node == null) return;
+    try {
+      final h = _node!.blockCount();
+      final fh = _node!.blockFilterHeaderCount();
+      final bh = h > 0 ? _node!.bestBlockHash() : '';
+
+      // Drain the pending log buffer in one setState call.
+      final incoming = List<String>.from(_pendingLogs);
+      _pendingLogs.clear();
+
+      setState(() {
+        _headerHeight = h;
+        _filterHeaderHeight = fh;
+        _bestHash = bh;
+        _log.addAll(incoming);
+        // Keep the list bounded so the ListView stays fast.
+        if (_log.length > 500) _log.removeRange(0, _log.length - 500);
+      });
+      if (incoming.isNotEmpty) _scrollToBottom();
+    } catch (_) {}
+  }
+
+  void _stop() {
+    _stopping = true;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _node?.shutdown();
+    _node = null;
+    _uninstallLogCapture();
+    if (mounted) {
+      setState(() => _state = _NodeRunState.stopped);
+      _addLog('Node stopped');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _LnNetworkPicker(
+            value: _network,
+            enabled: _canStart,
+            onChanged: (n) => setState(() => _network = n),
+          ),
+          const SizedBox(height: 12),
+          _LnStatusChip(state: _state),
+          const SizedBox(height: 12),
+          _LnStatsRow(
+            headerHeight: _headerHeight,
+            filterHeaderHeight: _filterHeaderHeight,
+            connectedPeer: _connectedPeer,
+          ),
+          if (_bestHash.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _LnBestHashCard(hash: _bestHash),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 280,
+            child: Card(
+              child: _log.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Press Start to run the node.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _logScrollController,
+                      padding: const EdgeInsets.all(10),
+                      itemCount: _log.length,
+                      itemBuilder: (_, i) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 1),
+                        child: Text(
+                          _log[i],
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 80),
+        ],
+      ),
+      floatingActionButton: _canStart
+          ? FloatingActionButton.extended(
+              onPressed: _start,
+              label: const Text('Start'),
+              icon: const Icon(Icons.play_arrow),
+            )
+          : FloatingActionButton.extended(
+              onPressed: _stop,
+              backgroundColor: Colors.red.shade700,
+              label: const Text('Stop'),
+              icon: const Icon(Icons.stop),
+            ),
+    );
+  }
+}
+
+class _LnNetworkPicker extends StatelessWidget {
+  final Network value;
+  final bool enabled;
+  final ValueChanged<Network> onChanged;
+
+  const _LnNetworkPicker({
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const networks = [Network.mainnet, Network.testnet, Network.testnet4];
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            const Text(
+              'Network:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 12),
+            for (final n in networks)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(n.name),
+                  selected: n == value,
+                  onSelected: enabled ? (_) => onChanged(n) : null,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LnStatusChip extends StatelessWidget {
+  final _NodeRunState state;
+
+  const _LnStatusChip({required this.state});
+
+  static const _labels = {
+    _NodeRunState.idle: 'Idle',
+    _NodeRunState.initializing: 'Initialising…',
+    _NodeRunState.discovering: 'Discovering peers…',
+    _NodeRunState.connecting: 'Connecting…',
+    _NodeRunState.syncing: 'Syncing',
+    _NodeRunState.stopped: 'Stopped',
+    _NodeRunState.error: 'Error',
+  };
+
+  static const _colors = {
+    _NodeRunState.idle: Colors.grey,
+    _NodeRunState.initializing: Colors.orange,
+    _NodeRunState.discovering: Colors.orange,
+    _NodeRunState.connecting: Colors.orange,
+    _NodeRunState.syncing: Colors.green,
+    _NodeRunState.stopped: Colors.grey,
+    _NodeRunState.error: Colors.red,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _labels[state]!;
+    final color = _colors[state]!;
+    final busy =
+        state == _NodeRunState.initializing ||
+        state == _NodeRunState.discovering ||
+        state == _NodeRunState.connecting ||
+        state == _NodeRunState.syncing;
+
+    return Row(
+      children: [
+        if (busy)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: color),
+            ),
+          ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            border: Border.all(color: color),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LnStatsRow extends StatelessWidget {
+  final int headerHeight;
+  final int filterHeaderHeight;
+  final String connectedPeer;
+
+  const _LnStatsRow({
+    required this.headerHeight,
+    required this.filterHeaderHeight,
+    required this.connectedPeer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _LnStatCard(
+            label: 'Block Headers',
+            value: headerHeight > 0 ? headerHeight.toString() : '—',
+            icon: Icons.link,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LnStatCard(
+            label: 'Filter Headers',
+            value: filterHeaderHeight > 0 ? filterHeaderHeight.toString() : '—',
+            icon: Icons.filter_list,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LnStatCard(
+            label: 'Peer',
+            value: connectedPeer.isNotEmpty ? connectedPeer : '—',
+            icon: Icons.wifi,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LnStatCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+
+  const _LnStatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 13, color: Colors.grey),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LnBestHashCard extends StatelessWidget {
+  final String hash;
+
+  const _LnBestHashCard({required this.hash});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.tag, size: 13, color: Colors.grey),
+            const SizedBox(width: 6),
+            const Text(
+              'Best block  ',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            Expanded(
+              child: SelectableText(
+                hash,
+                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+              ),
+            ),
           ],
         ),
       ),

@@ -12,7 +12,28 @@ import 'peer.dart';
 import 'block_filter.dart';
 import 'wallet.dart';
 
+export 'node_factory_stub.dart'
+    if (dart.library.io) 'node_native.dart'
+    if (dart.library.js_interop) 'node_web.dart'
+    show defaultNodeFactory;
+
 final _log = ColorLogger('Node');
+
+/// Factory that creates a platform-appropriate [Node] with bundled stores.
+///
+/// [storageLocation] is a file-system directory path on native platforms and
+/// an IndexedDB database-name prefix on web.  When omitted a sensible default
+/// is derived from the [network] name.
+typedef NodeFactory =
+    Node Function({
+      required Network network,
+      String? storageLocation,
+      bool verbose,
+      bool syncBlockHeaders,
+      bool syncBlockFilterHeaders,
+      Wallet? wallet,
+      required TxProvider txProvider,
+    });
 
 class Node {
   final Network network;
@@ -149,7 +170,22 @@ class Node {
           }
           // start syncing block filters
           if (syncBlockFilterHeaders) {
-            peer.syncBlockFilterHeaders(_chainManager);
+            // Only let one peer sync filter headers at a time.  If another
+            // peer is already in the syncing state, both would send independent
+            // GetCfHeaders requests for the same startHeight.  When the second
+            // response arrives it would appear as an invalid previousFilterHash
+            // because the first peer already advanced _bestBlockFilterHead.
+            final alreadySyncing = _peers.any(
+              (p) => p.status == PeerStatus.blockFilterHeaderSyncing,
+            );
+            if (!alreadySyncing) {
+              peer.syncBlockFilterHeaders(_chainManager);
+            } else if (verbose) {
+              _log.info(
+                'Peer ${peer.ip}:${peer.port} ready but another peer is already '
+                'syncing filter headers; will start after that peer finishes',
+              );
+            }
           }
           // TODO:
           //  - add new peers and wait for txs/blocks
@@ -171,7 +207,14 @@ class Node {
             _chainManager.bestBlockFilterHead.height) {
           // More block headers arrived during the sync; do another round.
           if (syncBlockFilterHeaders) {
-            peer.syncBlockFilterHeaders(_chainManager);
+            // Guard: same as above – only one peer syncs at a time.
+            final alreadySyncing = _peers.any(
+              (p) =>
+                  p != peer && p.status == PeerStatus.blockFilterHeaderSyncing,
+            );
+            if (!alreadySyncing) {
+              peer.syncBlockFilterHeaders(_chainManager);
+            }
           }
           break;
         }

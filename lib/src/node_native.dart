@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'block_filter.dart';
 import 'common.dart';
 import 'node.dart';
 import 'chain_store_file.dart';
+import 'wallet.dart';
 
 class NodeNative extends Node {
   final String dataDir;
@@ -56,3 +58,24 @@ class NodeNative extends Node {
     return resolved;
   }
 }
+
+Node _defaultNodeNativeFactory({
+  required Network network,
+  String? storageLocation,
+  bool verbose = false,
+  bool syncBlockHeaders = true,
+  bool syncBlockFilterHeaders = true,
+  Wallet? wallet,
+  required TxProvider txProvider,
+}) => NodeNative(
+  network: network,
+  dataDir: storageLocation,
+  verbose: verbose,
+  syncBlockHeaders: syncBlockHeaders,
+  syncBlockFilterHeaders: syncBlockFilterHeaders,
+  wallet: wallet,
+  txProvider: txProvider,
+);
+
+/// The file-system-backed [NodeFactory] for native platforms.
+const NodeFactory defaultNodeFactory = _defaultNodeNativeFactory;
