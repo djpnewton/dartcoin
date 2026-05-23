@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
@@ -55,6 +56,9 @@ class Node {
   final Map<String, Block> _pendingInterestingBlocks = {};
   int _interestingBlocksProcessedCount = 0;
   bool _isDrainingInterestingBlocks = false;
+
+  /// Timeout guard for [PeerStatus.blockFilterGetLatestBlock].
+  Timer? _latestBlockTimer;
 
   Node({
     required this.network,
@@ -224,6 +228,19 @@ class Node {
         peer.requestBlocks([
           _requestingBestBlockHash,
         ], PeerStatus.blockFilterGetLatestBlock);
+        // Arm a timeout – if the peer never sends the block we skip
+        // validation and proceed directly to filter sync.
+        _latestBlockTimer?.cancel();
+        _latestBlockTimer = Timer(const Duration(seconds: 30), () {
+          if (peer.status == PeerStatus.blockFilterGetLatestBlock) {
+            //TODO: disconnect and try another peer instead of skipping validation
+            _log.warning(
+              'Timeout waiting for best block from ${peer.ip}:${peer.port}; '
+              'skipping filter-chain validation and proceeding',
+            );
+            _beginFilterSync(peer);
+          }
+        });
         break;
       case PeerStatus.blockFilterGetLatestBlock:
         break;
@@ -263,60 +280,9 @@ class Node {
           block,
           _requestingBestBlockNumber,
         )) {
-          if (_startBlock == null) return;
-
-          // 1) Replay already-stored filters so interestingBlockHashes is populated
-          //    for blocks we downloaded on a previous run.
-          await _chainManager.replayStoredFilters(_startBlock, (
-            height,
-            blockHash,
-            filterBytes,
-          ) {
-            final filter = BasicBlockFilter.fromBytes(filterBytes: filterBytes);
-            wallet?.processBlockFilter(
-              blockHash,
-              filter,
-              network,
-              verbose: verbose,
-            );
-          });
-
-          // 2) Decide where to resume downloading.
-          final resumeFrom = (_chainManager.maxStoredFilterHeight != null)
-              ? _chainManager.maxStoredFilterHeight! + 1
-              : _startBlock;
-
-          if (resumeFrom > _chainManager.bestChainHead.height) {
-            // All filters already stored – request interesting blocks directly.
-            if (verbose) {
-              _log.info(
-                'All block filters already stored up to height ${_chainManager.maxStoredFilterHeight}, requesting interesting blocks',
-              );
-            }
-            final interesting = wallet?.interestingBlockHashes ?? [];
-            if (interesting.isNotEmpty) {
-              peer.requestBlocks(interesting, PeerStatus.getInterestingBlocks);
-            }
-            return;
-          }
-
-          // 3) Request remaining filters from resumeFrom.
-          if (verbose) {
-            _log.info(
-              'Resuming block filter download from height $resumeFrom (stored up to ${_chainManager.maxStoredFilterHeight ?? 'none'})',
-            );
-          }
-          final targetHeight =
-              _chainManager.bestChainHead.height < resumeFrom + 500
-              ? _chainManager.bestChainHead.height
-              : resumeFrom + 500;
-          final targetHash = _chainManager.bestChainHead
-              .getAt(targetHeight)
-              .header
-              .hash();
-          _requestingBlockFiltersCurrentTargetHash = targetHash;
-          _requestingBlockFiltersCurrentTargetHeight = targetHeight;
-          peer.syncBlockFilters(resumeFrom, targetHash);
+          _latestBlockTimer?.cancel();
+          _latestBlockTimer = null;
+          await _beginFilterSync(peer);
         }
       }
     } else if (peer.status == PeerStatus.getInterestingBlocks) {
@@ -358,6 +324,60 @@ class Node {
         _isDrainingInterestingBlocks = false;
       }
     }
+  }
+
+  /// Replay stored filters, then either request interesting blocks (if all
+  /// filters are already downloaded) or kick off the next filter batch.
+  /// Called both on successful filter-chain validation and on timeout.
+  Future<void> _beginFilterSync(Peer peer) async {
+    if (_startBlock == null) return;
+
+    // 1) Replay already-stored filters so interestingBlockHashes is populated
+    //    for blocks we downloaded on a previous run.
+    await _chainManager.replayStoredFilters(_startBlock, (
+      height,
+      blockHash,
+      filterBytes,
+    ) {
+      final filter = BasicBlockFilter.fromBytes(filterBytes: filterBytes);
+      wallet?.processBlockFilter(blockHash, filter, network, verbose: verbose);
+    });
+
+    // 2) Decide where to resume downloading.
+    final resumeFrom = (_chainManager.maxStoredFilterHeight != null)
+        ? _chainManager.maxStoredFilterHeight! + 1
+        : _startBlock;
+
+    if (resumeFrom > _chainManager.bestChainHead.height) {
+      // All filters already stored – request interesting blocks directly.
+      if (verbose) {
+        _log.info(
+          'All block filters already stored up to height ${_chainManager.maxStoredFilterHeight}, requesting interesting blocks',
+        );
+      }
+      final interesting = wallet?.interestingBlockHashes ?? [];
+      if (interesting.isNotEmpty) {
+        peer.requestBlocks(interesting, PeerStatus.getInterestingBlocks);
+      }
+      return;
+    }
+
+    // 3) Request remaining filters from resumeFrom.
+    if (verbose) {
+      _log.info(
+        'Resuming block filter download from height $resumeFrom (stored up to ${_chainManager.maxStoredFilterHeight ?? 'none'})',
+      );
+    }
+    final targetHeight = _chainManager.bestChainHead.height < resumeFrom + 500
+        ? _chainManager.bestChainHead.height
+        : resumeFrom + 500;
+    final targetHash = _chainManager.bestChainHead
+        .getAt(targetHeight)
+        .header
+        .hash();
+    _requestingBlockFiltersCurrentTargetHash = targetHash;
+    _requestingBlockFiltersCurrentTargetHeight = targetHeight;
+    peer.syncBlockFilters(resumeFrom, targetHash);
   }
 
   Future<void> _peerBlockFilterReceived(
@@ -461,6 +481,8 @@ class Node {
     if (verbose) {
       _log.info('Shutting down node...');
     }
+    _latestBlockTimer?.cancel();
+    _latestBlockTimer = null;
     for (final peer in _peers.toList()) {
       peer.disconnect();
     }
@@ -503,6 +525,10 @@ class Node {
 
   int blockFilterHeaderCount() {
     return _chainManager.bestBlockFilterHead.height;
+  }
+
+  int blockFilterCount() {
+    return _chainManager.maxStoredFilterHeight ?? 0;
   }
 
   String? blockFilterHeaderForHeight(int height) {

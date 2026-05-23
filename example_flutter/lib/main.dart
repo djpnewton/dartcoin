@@ -657,6 +657,14 @@ class _LightNodePageState extends State<LightNodePage> {
   final ScrollController _logScrollController = ScrollController();
   final List<String> _log = [];
 
+  // wallet config (editable only when stopped)
+  final TextEditingController _addressesCtrl = TextEditingController(
+    text: 'tb1q65v5vkjk6w08najsk2eu52yedq0p5fxmz62sk9',
+  );
+  final TextEditingController _birthdayCtrl = TextEditingController(
+    text: '108000',
+  );
+
   /// Log records buffered by the global log handler; flushed on each poll tick
   /// so we never call setState from within the node's processing.
   final List<String> _pendingLogs = [];
@@ -664,8 +672,12 @@ class _LightNodePageState extends State<LightNodePage> {
   // polled stats
   int _headerHeight = 0;
   int _filterHeaderHeight = 0;
+  int _filterHeight = 0;
   String _bestHash = '';
   String _connectedPeer = '';
+  int _unspentCoins = 0;
+  int _balanceSat = 0;
+  int _txCount = 0;
 
   /// Logger modules whose INFO messages are forwarded to the UI log.
   static const _uiModules = {'Node', 'Peer', 'PeerManager'};
@@ -730,18 +742,32 @@ class _LightNodePageState extends State<LightNodePage> {
     _node?.shutdown();
     _uninstallLogCapture();
     _logScrollController.dispose();
+    _addressesCtrl.dispose();
+    _birthdayCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _start() async {
+    // Parse wallet config before clearing state.
+    final addresses = _addressesCtrl.text
+        .split(RegExp(r'[,\n]+'))
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final birthday = int.tryParse(_birthdayCtrl.text.trim()) ?? 0;
+
     setState(() {
       _state = _NodeRunState.initializing;
       _log.clear();
       _pendingLogs.clear();
       _headerHeight = 0;
       _filterHeaderHeight = 0;
+      _filterHeight = 0;
       _bestHash = '';
       _connectedPeer = '';
+      _unspentCoins = 0;
+      _balanceSat = 0;
+      _txCount = 0;
     });
 
     _stopping = false;
@@ -750,11 +776,24 @@ class _LightNodePageState extends State<LightNodePage> {
     try {
       // 1. Create + initialise node
       _addLog('Creating node (${_network.name})…');
+      final wallet = addresses.isNotEmpty
+          ? Wallet(
+              addresses: addresses,
+              birthdayBlock: birthday,
+              txProvider: BlockDnTxProvider(_network),
+            )
+          : null;
+      if (wallet != null) {
+        _addLog(
+          'Wallet: ${addresses.length} address(es), birthday block $birthday',
+        );
+      }
       _node = defaultNodeFactory(
         network: _network,
         txProvider: BlockDnTxProvider(_network),
         syncBlockFilterHeaders: true,
         verbose: true,
+        wallet: wallet,
       );
       await _node!.init();
       if (_stopping || !mounted) return;
@@ -802,7 +841,12 @@ class _LightNodePageState extends State<LightNodePage> {
     try {
       final h = _node!.blockCount();
       final fh = _node!.blockFilterHeaderCount();
+      final ff = _node!.blockFilterCount();
       final bh = h > 0 ? _node!.bestBlockHash() : '';
+      final wallet = _node!.wallet;
+      final unspent = wallet?.unspentCoins.length ?? 0;
+      final balance = wallet?.unspentCoins.fold(0, (s, c) => s + c.amount) ?? 0;
+      final txCount = wallet?.transactions.length ?? 0;
 
       // Drain the pending log buffer in one setState call.
       final incoming = List<String>.from(_pendingLogs);
@@ -811,7 +855,11 @@ class _LightNodePageState extends State<LightNodePage> {
       setState(() {
         _headerHeight = h;
         _filterHeaderHeight = fh;
+        _filterHeight = ff;
         _bestHash = bh;
+        _unspentCoins = unspent;
+        _balanceSat = balance;
+        _txCount = txCount;
         _log.addAll(incoming);
         // Keep the list bounded so the ListView stays fast.
         if (_log.length > 500) _log.removeRange(0, _log.length - 500);
@@ -845,13 +893,28 @@ class _LightNodePageState extends State<LightNodePage> {
             onChanged: (n) => setState(() => _network = n),
           ),
           const SizedBox(height: 12),
+          _LnWalletConfigCard(
+            addressesCtrl: _addressesCtrl,
+            birthdayCtrl: _birthdayCtrl,
+            enabled: _canStart,
+          ),
+          const SizedBox(height: 12),
           _LnStatusChip(state: _state),
           const SizedBox(height: 12),
           _LnStatsRow(
             headerHeight: _headerHeight,
             filterHeaderHeight: _filterHeaderHeight,
+            filterHeight: _filterHeight,
             connectedPeer: _connectedPeer,
           ),
+          if (_node?.wallet != null) ...[
+            const SizedBox(height: 8),
+            _LnWalletStatsRow(
+              unspentCoins: _unspentCoins,
+              balanceSat: _balanceSat,
+              txCount: _txCount,
+            ),
+          ],
           if (_bestHash.isNotEmpty) ...[
             const SizedBox(height: 8),
             _LnBestHashCard(hash: _bestHash),
@@ -899,6 +962,101 @@ class _LightNodePageState extends State<LightNodePage> {
               label: const Text('Stop'),
               icon: const Icon(Icons.stop),
             ),
+    );
+  }
+}
+
+class _LnWalletConfigCard extends StatelessWidget {
+  final TextEditingController addressesCtrl;
+  final TextEditingController birthdayCtrl;
+  final bool enabled;
+
+  const _LnWalletConfigCard({
+    required this.addressesCtrl,
+    required this.birthdayCtrl,
+    required this.enabled,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Wallet', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 10),
+            TextField(
+              controller: addressesCtrl,
+              enabled: enabled,
+              decoration: const InputDecoration(
+                labelText: 'Addresses to scan',
+                hintText: 'Comma or newline separated',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 3,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: birthdayCtrl,
+              enabled: enabled,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Birthday block',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LnWalletStatsRow extends StatelessWidget {
+  final int unspentCoins;
+  final int balanceSat;
+  final int txCount;
+
+  const _LnWalletStatsRow({
+    required this.unspentCoins,
+    required this.balanceSat,
+    required this.txCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _LnStatCard(
+            label: 'Transactions',
+            value: txCount > 0 ? txCount.toString() : '—',
+            icon: Icons.swap_horiz,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LnStatCard(
+            label: 'Unspent Coins',
+            value: unspentCoins > 0 ? unspentCoins.toString() : '—',
+            icon: Icons.toll,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LnStatCard(
+            label: 'Balance',
+            value: balanceSat > 0 ? '$balanceSat sat' : '—',
+            icon: Icons.account_balance_wallet,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -992,7 +1150,7 @@ class _LnStatusChip extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
+            color: color.withValues(alpha: 0.15),
             border: Border.all(color: color),
             borderRadius: BorderRadius.circular(20),
           ),
@@ -1009,11 +1167,13 @@ class _LnStatusChip extends StatelessWidget {
 class _LnStatsRow extends StatelessWidget {
   final int headerHeight;
   final int filterHeaderHeight;
+  final int filterHeight;
   final String connectedPeer;
 
   const _LnStatsRow({
     required this.headerHeight,
     required this.filterHeaderHeight,
+    required this.filterHeight,
     required this.connectedPeer,
   });
 
@@ -1034,6 +1194,14 @@ class _LnStatsRow extends StatelessWidget {
             label: 'Filter Headers',
             value: filterHeaderHeight > 0 ? filterHeaderHeight.toString() : '—',
             icon: Icons.filter_list,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _LnStatCard(
+            label: 'Filters',
+            value: filterHeight > 0 ? filterHeight.toString() : '—',
+            icon: Icons.filter_alt,
           ),
         ),
         const SizedBox(width: 8),
