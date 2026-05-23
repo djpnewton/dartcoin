@@ -59,3 +59,21 @@ class DcTcpSocket implements DcSocket {
 
 /// The raw TCP [DcSocketFactory] for native platforms (Linux / macOS / Windows / Android / iOS).
 const DcSocketFactory defaultSocketFactory = DcTcpSocket.connect;
+
+/// DNS lookup for IPv4 (A) records using [dart:io]'s [InternetAddress.lookup].
+///
+/// The [socketFactory] and [dnsServer] parameters are accepted for API
+/// compatibility with the web counterpart but are not used here – the OS
+/// resolver handles everything.
+Future<List<String>> internetAddressLookupIPv4(
+  String host,
+  DcSocketFactory socketFactory, {
+  String dnsServer = '8.8.8.8',
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final addresses = await InternetAddress.lookup(
+    host,
+    type: InternetAddressType.IPv4,
+  ).timeout(timeout);
+  return addresses.map((a) => a.address).toList();
+}

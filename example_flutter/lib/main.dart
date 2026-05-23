@@ -445,7 +445,11 @@ class _PeerFinderPageState extends State<PeerFinderPage> {
 
     // Step 2: connect
     setState(() => _state = _FindState.connecting);
-    final manager = PeerManager(network: _network);
+    final manager = PeerManager(
+      network: _network,
+      concurrency: 2,
+      connectionStagger: const Duration(milliseconds: 500),
+    );
     final port = Peer.defaultPort(_network);
     Peer? found;
     for (final ip in ips) {
@@ -802,7 +806,12 @@ class _LightNodePageState extends State<LightNodePage> {
       // 2. Discover + connect to a peer that supports compact block filters
       setState(() => _state = _NodeRunState.discovering);
       _addLog('Searching for peer with compact filter support…');
-      final manager = PeerManager(network: _network, verbose: true);
+      final manager = PeerManager(
+        network: _network,
+        verbose: true,
+        concurrency: 2,
+        connectionStagger: const Duration(milliseconds: 500),
+      );
       final peer = await manager.findPeer();
       if (_stopping || !mounted) return;
 

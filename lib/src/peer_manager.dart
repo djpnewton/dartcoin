@@ -24,7 +24,17 @@ class PeerManager {
     required this.network,
     this.verbose = false,
     this.socketFactory = defaultSocketFactory,
-  });
+    int concurrency = 6,
+    this.connectionStagger = Duration.zero,
+  }) : _concurrency = concurrency;
+
+  /// How many peer connections are attempted in parallel per batch.
+  final int _concurrency;
+
+  /// Delay between starting each connection within a batch. Useful on
+  /// constrained transports (e.g. WebSocket bridge) where opening many
+  /// connections simultaneously can trigger rate-limiting.
+  final Duration connectionStagger;
 
   static const int _maxAttempts = 5;
   int _count = 0;
@@ -134,9 +144,6 @@ class PeerManager {
     return _peerCandidates;
   }
 
-  // Number of candidates to attempt concurrently in each batch.
-  static const int _concurrency = 6;
-
   /// Tries [candidates] concurrently in batches of [_concurrency]. Returns the
   /// first [Peer] that completes a handshake and supports compact block
   /// filters, disconnecting all losers. Returns `null` if all fail.
@@ -153,8 +160,14 @@ class PeerManager {
         );
       }
 
-      // Launch all connections in the batch concurrently.
-      final futures = batch.map((c) => _connectPeer(c)).toList();
+      // Launch connections, staggering starts if requested.
+      final futures = <Future<Peer>>[];
+      for (var j = 0; j < batch.length; j++) {
+        if (j > 0 && connectionStagger > Duration.zero) {
+          await Future<void>.delayed(connectionStagger);
+        }
+        futures.add(_connectPeer(batch[j]));
+      }
       final peers = await Future.wait(futures);
 
       Peer? winner;

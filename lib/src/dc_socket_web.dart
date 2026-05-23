@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:typed_data';
 
+import 'package:http/http.dart' as http;
 import 'package:universal_web/web.dart';
 
 import 'dc_socket.dart';
@@ -109,3 +111,29 @@ class DcWebSocket implements DcSocket {
 ///
 /// Configure the bridge address with [setWebSocketBridgeHostPort] before use.
 const DcSocketFactory defaultSocketFactory = DcWebSocket.connect;
+
+/// DNS lookup for IPv4 (A) records using DNS-over-HTTPS (DoH).
+///
+/// Queries Cloudflare's DoH endpoint (`1.1.1.1/dns-query`) over standard
+/// HTTPS, which is always reachable from a browser regardless of firewall
+/// rules that block raw port-53 TCP.  The [socketFactory] and [dnsServer]
+/// parameters are accepted for API compatibility but are not used here.
+Future<List<String>> internetAddressLookupIPv4(
+  String host,
+  DcSocketFactory socketFactory, {
+  String dnsServer = '8.8.8.8',
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final uri = Uri.https('1.1.1.1', '/dns-query', {'name': host, 'type': 'A'});
+  final response = await http
+      .get(uri, headers: {'Accept': 'application/dns-json'})
+      .timeout(timeout);
+  if (response.statusCode != 200) return [];
+  final data = jsonDecode(response.body) as Map<String, dynamic>;
+  if ((data['Status'] as int?) != 0) return [];
+  final answers = (data['Answer'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+  return answers
+      .where((a) => (a['type'] as int?) == 1) // type 1 = A record
+      .map((a) => a['data'] as String)
+      .toList();
+}
