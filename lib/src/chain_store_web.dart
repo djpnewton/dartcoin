@@ -70,12 +70,10 @@ Future<IDBDatabase> openDatabase(
 
 /// [ChainStore] backed by an IndexedDB object store.
 ///
-/// Each CSV row is stored as a separate record, keyed by its 0-based row
-/// index (an integer).  Row 0 is always the CSV header line; data rows start
-/// at index 1.  This avoids the "read-the-whole-file-then-rewrite-it" cost of
-/// the previous single-blob design: `append` only needs `count()` (O(1)) plus
-/// individual `put` calls in a single transaction, and `readLines` uses
-/// `getAll()` which IDB returns in key order.
+/// Each `write`/`append` call stores its whole content blob as a *single*
+/// record ("chunk"), keyed by a 0-based sequential chunk index.  `writeAll`
+/// creates chunk 0; every `append` adds exactly one new chunk.  A chunk holds
+/// one or more newline-separated CSV rows.
 ///
 /// Multiple [ChainStoreWeb] instances can share the same [IDBDatabase] by
 /// using different [storeName] values.
@@ -87,20 +85,16 @@ class ChainStoreWeb implements ChainStore {
 
   ChainStoreWeb(this._db, this.storeName);
 
-  Future<int> _rowCount() async {
+  Future<int> _chunkCount() async {
     final tx = _db.transaction(storeName.toJS, 'readonly');
     final result = await _requestFuture(tx.objectStore(storeName).count());
     return (result as JSNumber).toDartDouble.toInt();
   }
 
-  /// Writes [lines] into a single readwrite transaction starting at [startKey].
-  Future<void> _putLines(List<String> lines, {required int startKey}) async {
-    if (lines.isEmpty) return;
+  /// Stores [content] as a single record at [key] in its own transaction.
+  Future<void> _putChunk(String content, int key) async {
     final tx = _db.transaction(storeName.toJS, 'readwrite');
-    final store = tx.objectStore(storeName);
-    for (var i = 0; i < lines.length; i++) {
-      store.put(lines[i].toJS, (startKey + i).toJS);
-    }
+    tx.objectStore(storeName).put(content.toJS, key.toJS);
     await _txComplete(tx);
   }
 
@@ -115,10 +109,10 @@ class ChainStoreWeb implements ChainStore {
   }
 
   @override
-  Future<bool> exists() async => await _rowCount() > 0;
+  Future<bool> exists() async => await _chunkCount() > 0;
 
   @override
-  Future<bool> empty() async => await _rowCount() == 0;
+  Future<bool> empty() async => await _chunkCount() == 0;
 
   @override
   Future<void> delete() async {
@@ -131,23 +125,33 @@ class ChainStoreWeb implements ChainStore {
     final tx = _db.transaction(storeName.toJS, 'readonly');
     final result = await _requestFuture(tx.objectStore(storeName).getAll());
     if (result == null) return [];
-    return [for (final s in (result as JSArray<JSString>).toDart) s.toDart];
+    final lines = <String>[];
+    for (final chunk in (result as JSArray<JSString>).toDart) {
+      lines.addAll(_splitLines(chunk.toDart));
+    }
+    return lines;
   }
 
   @override
   Future<String?> lastLine() async {
-    // Open a cursor in descending key order and read only the first record,
-    // giving O(1) access to the last stored line instead of reading the whole
-    // store with getAll().
+    // Open a cursor in descending key order and read only the last chunk,
+    // giving O(chunk-size) access to the last stored line instead of reading
+    // the whole store with getAll().
     final tx = _db.transaction(storeName.toJS, 'readonly');
     final req = tx.objectStore(storeName).openCursor(null, 'prev');
     final c = Completer<String?>();
     req.onsuccess = ((JSObject _) {
       final cursor = req.result as IDBCursorWithValue?;
-      c.complete(cursor == null ? null : (cursor.value as JSString).toDart);
+      if (cursor == null) {
+        c.complete(null);
+        return;
+      }
+      final lines = _splitLines((cursor.value as JSString).toDart);
+      c.complete(lines.isEmpty ? null : lines.last);
     }).toJS;
-    req.onerror = ((JSObject _) =>
-        c.completeError(req.error?.message ?? 'IDB error')).toJS;
+    req.onerror = ((JSObject _) => c.completeError(
+      req.error?.message ?? 'IDB error',
+    )).toJS;
     return c.future;
   }
 
@@ -156,15 +160,15 @@ class ChainStoreWeb implements ChainStore {
     if (await exists()) {
       throw StateError('ChainStoreWeb "$storeName" already contains data');
     }
-    await _putLines(_splitLines(content), startKey: 0);
+    if (_splitLines(content).isEmpty) return;
+    await _putChunk(content, 0);
   }
 
   @override
   Future<void> append(String content) async {
-    final lines = _splitLines(content);
-    if (lines.isEmpty) return;
-    final startKey = await _rowCount();
-    await _putLines(lines, startKey: startKey);
+    if (_splitLines(content).isEmpty) return;
+    final key = await _chunkCount();
+    await _putChunk(content, key);
   }
 }
 
@@ -197,8 +201,10 @@ class BlockStoreWeb implements BlockStore {
 
   @override
   Future<void> store(Block block) async {
+    // `put` overwrites any existing record, and the bytes for a given block
+    // hash are immutable, so we can store unconditionally in a single
+    // transaction instead of a separate `contains` round-trip followed by put.
     final hashHex = block.hash().toHex();
-    if (await contains(block.hash())) return;
     final tx = _db.transaction(_storeName.toJS, 'readwrite');
     await _requestFuture(
       tx
