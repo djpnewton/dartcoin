@@ -83,7 +83,7 @@ class BlockHeader {
     return buffer.toBytes();
   }
 
-  factory BlockHeader.fromBytes(Uint8List bytes) {
+  factory BlockHeader.fromBytes(Uint8List bytes, {Uint8List? cachedHash}) {
     if (bytes.length != blockHeaderSize) {
       throw FormatException(
         'Block header must be exactly $blockHeaderSize bytes long',
@@ -111,7 +111,7 @@ class BlockHeader {
       time: time,
       nBits: nBits,
       nonce: nonce,
-    );
+    ).._cachedHash = cachedHash;
   }
 }
 

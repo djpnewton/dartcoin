@@ -128,7 +128,16 @@ class BlockHeaderStore {
       if (line.startsWith('height,timestamp,hash,header')) continue;
       final fields = line.split(',');
       if (fields.length == 4) {
-        headers.add(BlockHeader.fromBytes(fields[3].toBytes()));
+        // The stored `hash` field (display/big-endian hex) lets us prime the
+        // header's cached hash, avoiding an expensive double-SHA-256 per header
+        // when the height index is built on load.
+        Uint8List? cachedHash;
+        if (fields[2].length == 64) {
+          cachedHash = fields[2].toBytes().reverse();
+        }
+        headers.add(
+          BlockHeader.fromBytes(fields[3].toBytes(), cachedHash: cachedHash),
+        );
       }
     }
     _log.info('Loaded ${headers.length} block headers');
