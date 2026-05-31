@@ -60,11 +60,13 @@ class _AppShell extends StatelessWidget {
       if (!_hasFixedPeer)
         const Tab(icon: Icon(Icons.wifi_find), text: 'Peer Finder'),
       const Tab(icon: Icon(Icons.account_tree), text: 'Light Node'),
+      const Tab(icon: Icon(Icons.timer), text: 'Chain Load'),
     ];
     final pages = <Widget>[
       const BlockStorageDemoPage(),
       if (!_hasFixedPeer) const PeerFinderPage(),
       const LightNodePage(),
+      const ChainLoadPage(),
     ];
 
     return DefaultTabController(
@@ -962,17 +964,19 @@ class _LightNodePageState extends State<LightNodePage> {
                         style: TextStyle(color: Colors.grey),
                       ),
                     )
-                  : ListView.builder(
-                      controller: _logScrollController,
-                      padding: const EdgeInsets.all(10),
-                      itemCount: _log.length,
-                      itemBuilder: (_, i) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 1),
-                        child: Text(
-                          _log[i],
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 11,
+                  : SelectionArea(
+                      child: ListView.builder(
+                        controller: _logScrollController,
+                        padding: const EdgeInsets.all(10),
+                        itemCount: _log.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1),
+                          child: Text(
+                            _log[i],
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                            ),
                           ),
                         ),
                       ),
@@ -998,6 +1002,200 @@ class _LightNodePageState extends State<LightNodePage> {
   }
 }
 
+/// A diagnostic tab that measures how long it takes to load the persisted
+/// chain (block headers + filter headers) from storage, without connecting to
+/// any peer.
+class ChainLoadPage extends StatefulWidget {
+  const ChainLoadPage({super.key});
+
+  @override
+  State<ChainLoadPage> createState() => _ChainLoadPageState();
+}
+
+class _ChainLoadPageState extends State<ChainLoadPage> {
+  Network _network = Network.testnet4;
+  bool _loading = false;
+  final List<String> _log = [];
+
+  // Last run results.
+  int? _totalMs;
+  int? _headerCount;
+  int? _filterHeaderCount;
+  int? _filterCount;
+
+  void _addLog(String msg) {
+    final now = DateTime.now();
+    final ts =
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}:'
+        '${now.second.toString().padLeft(2, '0')}';
+    setState(() => _log.add('[$ts] $msg'));
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _log.clear();
+      _totalMs = null;
+      _headerCount = null;
+      _filterHeaderCount = null;
+      _filterCount = null;
+    });
+
+    Node? node;
+    try {
+      _addLog('Creating node (${_network.name})…');
+      final sw = Stopwatch()..start();
+      node = defaultNodeFactory(
+        network: _network,
+        txProvider: BlockDnTxProvider(_network),
+        syncBlockFilterHeaders: true,
+        verbose: true,
+      );
+      final createMs = sw.elapsedMilliseconds;
+      _addLog('Node created in ${createMs}ms — loading chain from storage…');
+
+      final initSw = Stopwatch()..start();
+      await node.init();
+      final initMs = initSw.elapsedMilliseconds;
+
+      final headers = node.blockCount();
+      final filterHeaders = node.blockFilterHeaderCount();
+      final filters = node.blockFilterCount();
+
+      final perK = headers > 0
+          ? (initMs / headers * 1000).toStringAsFixed(2)
+          : '—';
+
+      setState(() {
+        _totalMs = sw.elapsedMilliseconds;
+        _headerCount = headers;
+        _filterHeaderCount = filterHeaders;
+        _filterCount = filters;
+      });
+
+      _addLog('init() completed in ${initMs}ms');
+      _addLog(
+        'Loaded: $headers headers, $filterHeaders filter-headers, '
+        '$filters filters',
+      );
+      _addLog('Load rate: ${perK}ms per 1000 headers');
+      _addLog('Total (create + init): ${sw.elapsedMilliseconds}ms');
+    } catch (e) {
+      _addLog('Error: $e');
+    } finally {
+      node?.shutdown();
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Widget _metric(String label, String value) => Expanded(
+    child: Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _LnNetworkPicker(
+            value: _network,
+            enabled: !_loading,
+            onChanged: (n) => setState(() => _network = n),
+          ),
+          const SizedBox(height: 12),
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Loads the persisted chain from storage and measures how long '
+                'init() takes. No peer is contacted. Run the Light Node first '
+                'to populate storage, then load it here to profile read speed.',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _metric('init time', _totalMs == null ? '—' : '${_totalMs}ms'),
+              const SizedBox(width: 8),
+              _metric('headers', _headerCount == null ? '—' : '$_headerCount'),
+              const SizedBox(width: 8),
+              _metric(
+                'filter hdrs',
+                _filterHeaderCount == null ? '—' : '$_filterHeaderCount',
+              ),
+              const SizedBox(width: 8),
+              _metric('filters', _filterCount == null ? '—' : '$_filterCount'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 320,
+            child: Card(
+              child: _log.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Press Load to read the chain from storage.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : SelectionArea(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(10),
+                        itemCount: _log.length,
+                        itemBuilder: (_, i) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 1),
+                          child: Text(
+                            _log[i],
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 80),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _loading ? null : _load,
+        label: Text(_loading ? 'Loading…' : 'Load'),
+        icon: _loading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.download),
+      ),
+    );
+  }
+}
+
 class _LnWalletConfigCard extends StatelessWidget {
   final TextEditingController addressesCtrl;
   final TextEditingController birthdayCtrl;
@@ -1008,7 +1206,6 @@ class _LnWalletConfigCard extends StatelessWidget {
     required this.birthdayCtrl,
     required this.enabled,
   });
-
   @override
   Widget build(BuildContext context) {
     return Card(

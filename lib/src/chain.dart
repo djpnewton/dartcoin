@@ -87,6 +87,14 @@ class ChainManager {
        );
 
   Future<void> init() async {
+    final sw = Stopwatch()..start();
+    void lap(String label) {
+      if (verbose) {
+        _log.info('init: $label took ${sw.elapsedMilliseconds}ms');
+      }
+      sw.reset();
+    }
+
     // init chain stores
     await _blockHeaderStore.init();
     await _blockFilterHeaderStore.init();
@@ -101,14 +109,20 @@ class ChainManager {
       genesisFilter.filterHash,
       BasicBlockFilter.genesisPreviousHeader,
     );
+    lap('store + genesis init');
     // init best heads
     _bestChainHead = await _initBestHeader(network);
+    lap('_initBestHeader (read + build block headers)');
     _updateBlockHeaderHeightIndex();
+    lap('_updateBlockHeaderHeightIndex');
     _chainHeads.add(_bestChainHead);
     _bestBlockFilterHead = await _initBestBlockFilterHeaderHead(network);
+    lap('_initBestBlockFilterHeaderHead (read + build filter headers)');
     _updateBlockFilterHeaderHeightIndex();
+    lap('_updateBlockFilterHeaderHeightIndex');
     // block filters – write head is initialised from file inside BlockFilterStore
     await _blockFilterStore.init();
+    lap('_blockFilterStore.init');
     if (verbose && _blockFilterStore.writeHead != null) {
       _log.info(
         'Loaded stored block filters up to height ${_blockFilterStore.writeHead}',
