@@ -34,6 +34,16 @@ class ChainStoreFile implements ChainStore {
   Future<List<String>> readLines() async => await File(filePath).readAsLines();
 
   @override
+  Future<String?> lastLine() async {
+    if (!await exists()) return null;
+    final lines = await File(filePath).readAsLines();
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].isNotEmpty) return lines[i];
+    }
+    return null;
+  }
+
+  @override
   Future<void> writeAll(String content) async {
     final file = File(filePath);
     if (await file.exists()) {

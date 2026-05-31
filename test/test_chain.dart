@@ -35,6 +35,12 @@ class _MemChainStore implements ChainStore {
       : _data.split('\n').where((l) => l.isNotEmpty).toList();
 
   @override
+  Future<String?> lastLine() async {
+    final lines = await readLines();
+    return lines.isEmpty ? null : lines.last;
+  }
+
+  @override
   Future<void> writeAll(String content) async {
     if (_data.isNotEmpty) throw StateError('Store already has data');
     _data = content;

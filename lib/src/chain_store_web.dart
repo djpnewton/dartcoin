@@ -135,6 +135,23 @@ class ChainStoreWeb implements ChainStore {
   }
 
   @override
+  Future<String?> lastLine() async {
+    // Open a cursor in descending key order and read only the first record,
+    // giving O(1) access to the last stored line instead of reading the whole
+    // store with getAll().
+    final tx = _db.transaction(storeName.toJS, 'readonly');
+    final req = tx.objectStore(storeName).openCursor(null, 'prev');
+    final c = Completer<String?>();
+    req.onsuccess = ((JSObject _) {
+      final cursor = req.result as IDBCursorWithValue?;
+      c.complete(cursor == null ? null : (cursor.value as JSString).toDart);
+    }).toJS;
+    req.onerror = ((JSObject _) =>
+        c.completeError(req.error?.message ?? 'IDB error')).toJS;
+    return c.future;
+  }
+
+  @override
   Future<void> writeAll(String content) async {
     if (await exists()) {
       throw StateError('ChainStoreWeb "$storeName" already contains data');
@@ -235,6 +252,8 @@ class ChainStoreWebAuto implements ChainStore {
   Future<void> delete() async => (await _ensureInner()).delete();
   @override
   Future<List<String>> readLines() async => (await _ensureInner()).readLines();
+  @override
+  Future<String?> lastLine() async => (await _ensureInner()).lastLine();
   @override
   Future<void> writeAll(String content) async =>
       (await _ensureInner()).writeAll(content);

@@ -94,6 +94,13 @@ abstract class ChainStore {
   /// Return all stored lines (including any header line).
   Future<List<String>> readLines();
 
+  /// Return the last stored line, or null if storage is empty.
+  ///
+  /// Implementations should make this O(1) where possible
+  /// so that append height-continuity checks do not require
+  /// reading the entire store on every append.
+  Future<String?> lastLine();
+
   /// Create the storage and write [content].  Throws if storage already exists.
   Future<void> writeAll(String content);
 
@@ -159,9 +166,9 @@ class BlockHeaderStore {
       );
     }
     // Height-continuity check.
-    final lines = await _backend.readLines();
-    if (lines.isEmpty) throw StateError('Storage is empty, cannot append');
-    final lastHeight = int.tryParse(lines.last.split(',')[0]);
+    final last = await _backend.lastLine();
+    if (last == null) throw StateError('Storage is empty, cannot append');
+    final lastHeight = int.tryParse(last.split(',')[0]);
     if (lastHeight == null) throw StateError('Invalid last height in storage');
     final expectedPrev = chainEntries.first.previous?.height;
     if (lastHeight != expectedPrev) {
@@ -231,9 +238,9 @@ class BlockFilterHeaderStore {
       );
     }
     // Height-continuity check.
-    final lines = await _backend.readLines();
-    if (lines.isEmpty) throw StateError('Storage is empty, cannot append');
-    final lastHeight = int.tryParse(lines.last.split(',')[0]);
+    final last = await _backend.lastLine();
+    if (last == null) throw StateError('Storage is empty, cannot append');
+    final lastHeight = int.tryParse(last.split(',')[0]);
     if (lastHeight == null) throw StateError('Invalid last height in storage');
     final expectedPrev = entries.first.previous?.height;
     if (lastHeight != expectedPrev) {
@@ -287,12 +294,8 @@ class BlockFilterStore {
 
   Future<int?> _scanWriteHead() async {
     if (!await _backend.exists() || await _backend.empty()) return null;
-    final lines = await _backend.readLines();
-    for (var i = lines.length - 1; i >= 0; i--) {
-      final entry = _parseLine(lines[i]);
-      if (entry != null) return entry.height;
-    }
-    return null;
+    final last = await _backend.lastLine();
+    return last == null ? null : _parseLine(last)?.height;
   }
 
   String _entryToLine(BlockFilterEntry e) =>
