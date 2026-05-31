@@ -73,7 +73,9 @@ BigInt siphash(Uint8List input, Uint8List key) {
   var k1 = bytesToBigInt(key.sublist(8, 16), endian: Endian.little);
   final endIndex = input.length - (input.length % 8);
   final left = input.length & 7;
-  var b = input.length << 56;
+  // Use BigInt for `b` so shifts of 32 or more bits are computed correctly on
+  // the web, where native int bitwise operations are limited to 32 bits.
+  var b = BigInt.from(input.length) << 56;
   state.v3 ^= k1;
   state.v2 ^= k0;
   state.v1 ^= k1;
@@ -93,40 +95,41 @@ BigInt siphash(Uint8List input, Uint8List key) {
 
   switch (left) {
     case 7:
-      b |= input[endIndex + 6] << 48;
+      b |= BigInt.from(input[endIndex + 6]) << 48;
       continue six;
     six:
     case 6:
-      b |= input[endIndex + 5] << 40;
+      b |= BigInt.from(input[endIndex + 5]) << 40;
       continue five;
     five:
     case 5:
-      b |= input[endIndex + 4] << 32;
+      b |= BigInt.from(input[endIndex + 4]) << 32;
       continue four;
     four:
     case 4:
-      b |= input[endIndex + 3] << 24;
+      b |= BigInt.from(input[endIndex + 3]) << 24;
       continue three;
     three:
     case 3:
-      b |= input[endIndex + 2] << 16;
+      b |= BigInt.from(input[endIndex + 2]) << 16;
       continue two;
     two:
     case 2:
-      b |= input[endIndex + 1] << 8;
+      b |= BigInt.from(input[endIndex + 1]) << 8;
       continue one;
     one:
     case 1:
-      b |= input[endIndex];
+      b |= BigInt.from(input[endIndex]);
   }
 
-  state.v3 ^= BigInt.from(b);
+  b = b.toUnsigned(64);
+  state.v3 ^= b;
 
   for (int i = 0; i < cRounds; ++i) {
     state.sipRound();
   }
 
-  state.v0 ^= BigInt.from(b);
+  state.v0 ^= b;
   state.v2 ^= BigInt.from(0xff);
 
   for (int i = 0; i < dRounds; ++i) {
