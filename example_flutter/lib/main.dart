@@ -18,6 +18,27 @@ int _fixedPeerPortFor(Network network) {
   return parsed ?? Peer.defaultPort(network);
 }
 
+/// Compile-time define to pin the app to a single network and hide the
+/// network-selection UI. Set with e.g. `--dart-define=FIXED_NETWORK=testnet4`.
+const _fixedNetworkRaw = String.fromEnvironment('FIXED_NETWORK');
+
+bool get _hasFixedNetwork => _fixedNetworkRaw.trim().isNotEmpty;
+
+Network get _fixedNetwork {
+  final name = _fixedNetworkRaw.trim().toLowerCase();
+  return Network.values.firstWhere(
+    (n) => n.name.toLowerCase() == name,
+    orElse: () => throw ArgumentError(
+      'Unknown FIXED_NETWORK "$_fixedNetworkRaw". '
+      'Valid values: ${Network.values.map((n) => n.name).join(', ')}',
+    ),
+  );
+}
+
+/// Returns the fixed network when [FIXED_NETWORK] is set, otherwise [fallback].
+Network _defaultNetwork(Network fallback) =>
+    _hasFixedNetwork ? _fixedNetwork : fallback;
+
 void main() {
   // init logger for console output
   initConsoleLogger();
@@ -74,7 +95,11 @@ class _AppShell extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-          title: const Text('Dartcoin Demo'),
+          title: Text(
+            _hasFixedNetwork
+                ? 'Dartcoin Demo (${_fixedNetwork.name})'
+                : 'Dartcoin Demo',
+          ),
           bottom: TabBar(tabs: tabs),
         ),
         body: TabBarView(children: pages),
@@ -426,7 +451,7 @@ class PeerFinderPage extends StatefulWidget {
 
 class _PeerFinderPageState extends State<PeerFinderPage> {
   _FindState _state = _FindState.idle;
-  Network _network = Network.mainnet;
+  Network _network = _defaultNetwork(Network.mainnet);
   final List<String> _log = [];
   Peer? _peer;
 
@@ -493,35 +518,36 @@ class _PeerFinderPageState extends State<PeerFinderPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Network selector
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: Row(
-              children: [
-                const Text('Network:'),
-                const SizedBox(width: 12),
-                DropdownButton<Network>(
-                  value: _network,
-                  onChanged: _busy
-                      ? null
-                      : (v) => setState(() => _network = v!),
-                  items: const [
-                    DropdownMenuItem(
-                      value: Network.mainnet,
-                      child: Text('Mainnet'),
-                    ),
-                    DropdownMenuItem(
-                      value: Network.testnet,
-                      child: Text('Testnet'),
-                    ),
-                    DropdownMenuItem(
-                      value: Network.testnet4,
-                      child: Text('Testnet4'),
-                    ),
-                  ],
-                ),
-              ],
+          if (!_hasFixedNetwork)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Row(
+                children: [
+                  const Text('Network:'),
+                  const SizedBox(width: 12),
+                  DropdownButton<Network>(
+                    value: _network,
+                    onChanged: _busy
+                        ? null
+                        : (v) => setState(() => _network = v!),
+                    items: const [
+                      DropdownMenuItem(
+                        value: Network.mainnet,
+                        child: Text('Mainnet'),
+                      ),
+                      DropdownMenuItem(
+                        value: Network.testnet,
+                        child: Text('Testnet'),
+                      ),
+                      DropdownMenuItem(
+                        value: Network.testnet4,
+                        child: Text('Testnet4'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
           // Log
           Expanded(
             child: Padding(
@@ -666,7 +692,7 @@ class LightNodePage extends StatefulWidget {
 
 class _LightNodePageState extends State<LightNodePage> {
   _NodeRunState _state = _NodeRunState.idle;
-  Network _network = Network.testnet4;
+  Network _network = _defaultNetwork(Network.testnet4);
   Node? _node;
   Timer? _pollTimer;
   bool _stopping = false;
@@ -921,12 +947,14 @@ class _LightNodePageState extends State<LightNodePage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _LnNetworkPicker(
-            value: _network,
-            enabled: _canStart,
-            onChanged: (n) => setState(() => _network = n),
-          ),
-          const SizedBox(height: 12),
+          if (!_hasFixedNetwork) ...[
+            _LnNetworkPicker(
+              value: _network,
+              enabled: _canStart,
+              onChanged: (n) => setState(() => _network = n),
+            ),
+            const SizedBox(height: 12),
+          ],
           _LnWalletConfigCard(
             addressesCtrl: _addressesCtrl,
             birthdayCtrl: _birthdayCtrl,
@@ -1013,7 +1041,7 @@ class ChainLoadPage extends StatefulWidget {
 }
 
 class _ChainLoadPageState extends State<ChainLoadPage> {
-  Network _network = Network.testnet4;
+  Network _network = _defaultNetwork(Network.testnet4);
   bool _loading = false;
   final List<String> _log = [];
 
@@ -1117,12 +1145,14 @@ class _ChainLoadPageState extends State<ChainLoadPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _LnNetworkPicker(
-            value: _network,
-            enabled: !_loading,
-            onChanged: (n) => setState(() => _network = n),
-          ),
-          const SizedBox(height: 12),
+          if (!_hasFixedNetwork) ...[
+            _LnNetworkPicker(
+              value: _network,
+              enabled: !_loading,
+              onChanged: (n) => setState(() => _network = n),
+            ),
+            const SizedBox(height: 12),
+          ],
           const Card(
             child: Padding(
               padding: EdgeInsets.all(16),

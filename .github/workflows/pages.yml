@@ -40,6 +40,7 @@ jobs:
           --dart-define=WS_BRIDGE_PORT=443
           --dart-define=FIXED_PEER_HOST=193.30.123.70
           --dart-define=FIXED_PEER_PORT=48333
+          --dart-define=FIXED_NETWORK=testnet4
 
       - uses: actions/upload-pages-artifact@v3
         with:
