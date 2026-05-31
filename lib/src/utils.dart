@@ -4,12 +4,18 @@ import 'dart:typed_data';
 import 'ripemd160.dart';
 import 'sha256.dart';
 
+const _hexDigits = '0123456789abcdef';
+
 String bytesToHex(Uint8List bytes) {
-  final buffer = StringBuffer();
-  for (final byte in bytes) {
-    buffer.write(byte.toRadixString(16).padLeft(2, '0'));
+  // Lookup-table encoding into a code-unit buffer. This avoids per-byte
+  // `toRadixString`/`padLeft`/StringBuffer overhead.
+  final out = Uint8List(bytes.length * 2);
+  var j = 0;
+  for (final b in bytes) {
+    out[j++] = _hexDigits.codeUnitAt((b >> 4) & 0xf);
+    out[j++] = _hexDigits.codeUnitAt(b & 0xf);
   }
-  return buffer.toString();
+  return String.fromCharCodes(out);
 }
 
 String ibytesToHex(List<int> bytes) {
@@ -17,19 +23,34 @@ String ibytesToHex(List<int> bytes) {
 }
 
 Uint8List hexToBytes(String hex) {
-  if (hex.length % 2 != 0) {
+  // Decode using direct code-unit arithmetic instead of substring + int.parse
+  // per byte.
+  var start = 0;
+  // skip a leading '0x' / '0X' prefix if present
+  if (hex.length >= 2 &&
+      hex.codeUnitAt(0) == 0x30 &&
+      (hex.codeUnitAt(1) | 0x20) == 0x78) {
+    start = 2;
+  }
+  final len = hex.length - start;
+  if (len % 2 != 0) {
     throw ArgumentError('Hex string must have an even length');
   }
-  // remove any leading '0x' if present
-  if (hex.startsWith('0x')) {
-    hex = hex.substring(2);
+  final out = Uint8List(len ~/ 2);
+  var oi = 0;
+  for (var i = start; i < hex.length; i += 2) {
+    out[oi++] =
+        (_hexNibble(hex.codeUnitAt(i)) << 4) |
+        _hexNibble(hex.codeUnitAt(i + 1));
   }
-  final byteList = Uint8List(hex.length ~/ 2);
-  for (int i = 0; i < hex.length; i += 2) {
-    final byte = int.parse(hex.substring(i, i + 2), radix: 16);
-    byteList[i ~/ 2] = byte;
-  }
-  return byteList;
+  return out;
+}
+
+int _hexNibble(int c) {
+  if (c >= 0x30 && c <= 0x39) return c - 0x30; // '0'-'9'
+  if (c >= 0x61 && c <= 0x66) return c - 0x57; // 'a'-'f'
+  if (c >= 0x41 && c <= 0x46) return c - 0x37; // 'A'-'F'
+  throw FormatException('Invalid hex character: ${String.fromCharCode(c)}');
 }
 
 extension HexString on String {
