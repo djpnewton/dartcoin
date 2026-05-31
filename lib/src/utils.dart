@@ -260,12 +260,14 @@ CompactSizeParseResult compactSizeParse(Uint8List buffer) {
 Uint8List setUint64JsSafe(int value, {Endian endian = Endian.big}) {
   final buffer = Uint8List(8);
   final byteData = buffer.buffer.asByteData();
+  final high = value ~/ 0x100000000;
+  final low = value % 0x100000000;
   if (endian == Endian.big) {
-    byteData.setUint32(0, (value >> 32) & 0xFFFFFFFF, Endian.big);
-    byteData.setUint32(4, value & 0xFFFFFFFF, Endian.big);
+    byteData.setUint32(0, high, Endian.big);
+    byteData.setUint32(4, low, Endian.big);
   } else {
-    byteData.setUint32(4, (value >> 32) & 0xFFFFFFFF, Endian.little);
-    byteData.setUint32(0, value & 0xFFFFFFFF, Endian.little);
+    byteData.setUint32(4, high, Endian.little);
+    byteData.setUint32(0, low, Endian.little);
   }
   return buffer;
 }
@@ -276,11 +278,14 @@ int getUint64JsSafe(Uint8List bytes, {Endian endian = Endian.big}) {
     throw ArgumentError('Bytes must be at least 8 bytes long');
   }
   final byteData = bytes.buffer.asByteData();
+  final int high;
+  final int low;
   if (endian == Endian.big) {
-    return (byteData.getUint32(0, Endian.big) << 32) |
-        byteData.getUint32(4, Endian.big);
+    high = byteData.getUint32(0, Endian.big);
+    low = byteData.getUint32(4, Endian.big);
   } else {
-    return (byteData.getUint32(4, Endian.little) << 32) |
-        byteData.getUint32(0, Endian.little);
+    high = byteData.getUint32(4, Endian.little);
+    low = byteData.getUint32(0, Endian.little);
   }
+  return high * 0x100000000 + low;
 }
